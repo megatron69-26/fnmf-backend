@@ -1,0 +1,10 @@
+# Không copy những thứ này vào Docker image
+target/
+.idea/
+*.iml
+.vscode/
+.env
+.env.example
+.git/
+.gitignore
+README.md
