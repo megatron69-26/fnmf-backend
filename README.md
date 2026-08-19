@@ -1,157 +1,114 @@
 # FNMF Backend & AI Gateway
 **Financial News & Market Forecasting (FNMF)**  
-*Backend REST API, Database Management & AI Processing Layer*
+*Backend REST API, Oracle Database & AI Processing Layer*
 
 - **Người thực hiện:** Đặng Đức Khôi (Backend / Data Developer)
-- **Công nghệ cốt lõi:** Java 17, Spring Boot 3.3.5, Spring Data JPA, Oracle Database 21c, Spring Security (BCrypt), JJWT (JSON Web Token), Docker.
+- **Công nghệ cốt lõi:** Java 17, Spring Boot 3.3.5, Spring Data JPA, Oracle Database 21c, Spring Security (BCrypt), JJWT, Alpha Vantage API, Gemini AI.
 
 ---
 
-## 📌 1. Giới thiệu & Tính năng (Tuần 1)
+## 📌 1. Tổng quan & Các tính năng hoàn thành (Tuần 1 & Tuần 2)
 
 Dự án Backend đóng vai trò làm trung tâm xử lý nghiệp vụ, quản lý dữ liệu và cầu nối AI cho toàn bộ ứng dụng di động FNMF:
-- **Xác thực & Bảo mật (Auth Module):** Đăng ký, Đăng nhập bảo mật với mã hóa một chiều **BCrypt** và cấp vé định danh **JWT Token**.
-- **Quản lý Ví vốn ảo (Paper Trading):** Tự động khởi tạo và cấp ví cá nhân với số dư mặc định **$10,000.00** khi người dùng đăng ký tài khoản thành công.
-- **Cơ sở dữ liệu tập trung (Oracle DB):** Hệ thống 6 bảng CSDL chuẩn hóa phục vụ: Quản lý người dùng, Ví ảo, Danh mục nắm giữ (Holdings), Lịch sử giao dịch (Transactions), Watchlist và Bộ nhớ đệm AI News Cache.
-- **Cổng AI Gateway:** Giấu an toàn API Key, tích hợp cơ chế Retry (Exponential Backoff) và Rate Limiting bảo vệ hệ thống.
+
+1. **Xác thực & Bảo mật (Auth Module):**
+   - Đăng ký, Đăng nhập với mật khẩu mã hóa một chiều **BCrypt**.
+   - Cấp vé thông hành định danh **JWT Bearer Token** (thời hạn 24h).
+   - Tự động khởi tạo và cấp ví vốn ảo mặc định **$10,000.00** cho mỗi người dùng mới.
+
+2. **Dữ liệu Thị trường Thời gian thực (Market Data & Candlestick):**
+   - Tích hợp **Alpha Vantage API** lấy giá thời gian thực của Bitcoin, Ethereum, Vàng thế giới (XAUUSD), Dầu thô WTI (USOIL).
+   - Cung cấp chuỗi nến lịch sử **OHLCV** (Open, High, Low, Close, Volume) để Android vẽ Candlestick Chart.
+   - Cung cấp dòng tin tức tài chính kinh tế thế giới (`NEWS_SENTIMENT`).
+
+3. **Phân tích Tin tức Tài chính bằng AI (Gemini AI Sentiment & Cache):**
+   - Tự động tóm tắt 3-5 gạch đầu dòng trọng tâm của bài báo kinh tế.
+   - Gán nhãn xu hướng: `BULLISH` (Tăng/Cơ hội), `BEARISH` (Giảm/Rủi ro), `NEUTRAL` (Trung lập) kèm % độ tin cậy và lý do.
+   - **Cơ chế Caching Oracle DB:** Lưu bài báo đã phân tích vào bảng `NEWS_AI_CACHE`, tái sử dụng kết quả trong < 5ms (chống tốn quota AI).
+
+4. **Quản lý Danh mục Theo dõi (Watchlist CRUD):**
+   - Thêm, xem, xóa các mã tài sản yêu thích vào bảng `WATCHLISTS`, tự động đính kèm giá thị trường và biến động 24h.
+
+5. **Giao dịch Giả lập (Paper Trading & Quản lý Danh mục):**
+   - Đặt lệnh **MUA (BUY)** và **BÁN (SELL)** với giá thị trường thời gian thực.
+   - Kiểm tra số dư ví ảo $\rightarrow$ Trừ/cộng tiền trong bảng `WALLETS`.
+   - Tính toán giá vốn trung bình và khối lượng trong bảng `HOLDINGS`.
+   - Ghi nhận lịch sử giao dịch vào bảng `TRANSACTIONS`.
+   - Tính toán tổng tài sản ròng (**Net Worth**) và tỷ lệ **Lời/Lỗ (PnL)** thời gian thực.
 
 ---
 
-## 🗄️ 2. Cấu trúc Cơ sở dữ liệu (Database Schema)
+## 🗄️ 2. Cấu trúc Cơ sở dữ liệu (Oracle Database)
 
 Hệ thống CSDL chạy trên **Oracle Database** (Schema: `KHOI2` / Connection: `khoi_mobile`) bao gồm 6 bảng:
 1. `USERS`: Lưu trữ tài khoản và mật khẩu đã băm (`password_hash`).
-2. `WALLETS`: Lưu trữ ví vốn ảo, số dư khả dụng và vốn khởi tạo.
+2. `WALLETS`: Lưu trữ ví vốn ảo, số dư khả dụng và vốn khởi tạo ($10,000.00).
 3. `HOLDINGS`: Danh mục tài sản ảo đang nắm giữ (Vàng XAUUSD, Dầu USOIL, Bitcoin BTCUSDT...).
 4. `TRANSACTIONS`: Lịch sử các lệnh Mua/Bán khớp lệnh thời gian thực.
 5. `WATCHLISTS`: Danh mục theo dõi yêu thích của từng người dùng (CRUD).
 6. `NEWS_AI_CACHE`: Bộ nhớ đệm lưu trữ bài báo và kết quả tóm tắt / phân tích tâm lý từ Gemini AI.
 
-*File script tạo bảng: [`fnmf_schema_khoi_mobile.sql`](../fnmf_schema_khoi_mobile.sql)*
+---
+
+## 📖 3. Tài liệu API (API Reference)
+
+### 🔐 A. NHÓM API AUTH (XÁC THỰC)
+* `POST /api/auth/register` : Đăng ký tài khoản mới $\rightarrow$ Tự động cấp ví ảo $10,000.00.
+* `POST /api/auth/login` : Đăng nhập $\rightarrow$ Nhận JWT Bearer Token.
+* `GET /api/auth/me` : Lấy profile user và số dư ví (Header `Authorization: Bearer <token>`).
 
 ---
 
-## 🚀 3. Hướng dẫn Chạy ứng dụng
-
-### Yêu cầu môi trường:
-- **JDK:** Java 17 (Eclipse Temurin hoặc OpenJDK 17+)
-- **Database:** Oracle Database 21c (Lắng nghe tại cổng `1521`, SID: `orcl`)
-- **Maven:** 3.9+
-
-### Cách chạy:
-#### Cách 1: Chạy bằng IntelliJ IDEA
-1. Mở thư mục `llm-gateway2` trong IntelliJ IDEA.
-2. Mở file `src/main/java/com/llmgateway/LlmGatewayApplication.java`.
-3. Nhấn nút **Run ▶️** (Server sẽ lắng nghe tại cổng `http://localhost:8082`).
-
-#### Cách 2: Chạy bằng dòng lệnh (Maven)
-```bash
-mvn clean spring-boot:run
-```
+### 📈 B. NHÓM API MARKET DATA (DỮ LIỆU THỊ TRƯỜNG)
+* `GET /api/market/prices` : Lấy giá thời gian thực của tất cả tài sản (BTC, ETH, Vàng, Dầu).
+* `GET /api/market/price/{symbol}` : Lấy giá của 1 mã cụ thể (ví dụ: `BTCUSDT`).
+* `GET /api/market/candles?symbol=BTCUSDT&interval=daily` : Lấy 30 cây nến OHLCV để vẽ biểu đồ.
+* `GET /api/market/news?limit=10` : Lấy dòng tin tức kinh tế mới nhất.
 
 ---
 
-## 📖 4. Tài liệu API (API Documentation)
+### 🧠 C. NHÓM API AI NEWS & SENTIMENT
+* `POST /api/news/analyze` : Gửi bài báo để AI tóm tắt 3 ý + gán nhãn Bullish/Bearish.
+* `GET /api/news/cache` : Xem danh sách các bài báo đã được AI phân tích trong CSDL.
 
-### 🔹 1. Đăng ký tài khoản (`POST /api/auth/register`)
-- **Endpoint:** `http://localhost:8082/api/auth/register`
-- **Method:** `POST`
-- **Header:** `Content-Type: application/json`
-- **Request Body:**
+**Body mẫu `POST /api/news/analyze`:**
 ```json
 {
-  "email": "user@fnmf.com",
-  "password": "password123",
-  "fullName": "Nguyen Van A"
-}
-```
-- **Response thành công (200 OK):**
-```json
-{
-  "token": "eyJhbGciOiJIUzI1NiJ9...",
-  "tokenType": "Bearer",
-  "user": {
-    "id": 1,
-    "email": "user@fnmf.com",
-    "fullName": "Nguyen Van A",
-    "avatarUrl": null,
-    "createdAt": "2026-08-19T01:34:18"
-  },
-  "wallet": {
-    "id": 1,
-    "userId": 1,
-    "balanceUsd": 10000.0000,
-    "initialBalance": 10000.0000
-  },
-  "message": "Đăng ký tài khoản và khởi tạo ví ảo $10,000 thành công!"
+  "title": "FED quyết định hạ lãi suất 0.5%",
+  "content": "Cục Dự trữ Liên bang Mỹ vừa hạ lãi suất...",
+  "symbol": "XAUUSD"
 }
 ```
 
 ---
 
-### 🔹 2. Đăng nhập (`POST /api/auth/login`)
-- **Endpoint:** `http://localhost:8082/api/auth/login`
-- **Method:** `POST`
-- **Request Body:**
-```json
-{
-  "email": "user@fnmf.com",
-  "password": "password123"
-}
-```
-- **Response thành công (200 OK):**
-```json
-{
-  "token": "eyJhbGciOiJIUzI1NiJ9...",
-  "tokenType": "Bearer",
-  "user": {
-    "id": 1,
-    "email": "user@fnmf.com",
-    "fullName": "Nguyen Van A",
-    "avatarUrl": null,
-    "createdAt": "2026-08-19T01:34:18"
-  },
-  "wallet": {
-    "id": 1,
-    "userId": 1,
-    "balanceUsd": 10000.0000,
-    "initialBalance": 10000.0000
-  },
-  "message": "Đăng nhập thành công!"
-}
-```
+### 📋 D. NHÓM API WATCHLIST (DANH MỤC THEO DÕI)
+*(Yêu cầu Header `Authorization: Bearer <token>`)*
+* `GET /api/watchlist` : Lấy danh sách theo dõi của User.
+* `POST /api/watchlist` : Thêm mã mới vào danh mục (`{ "symbol": "BTCUSDT" }`).
+* `DELETE /api/watchlist/{symbol}` : Xóa mã khỏi danh mục.
 
 ---
 
-### 🔹 3. Lấy thông tin tài khoản hiện tại (`GET /api/auth/me`)
-- **Endpoint:** `http://localhost:8082/api/auth/me`
-- **Method:** `GET`
-- **Header:** `Authorization: Bearer <token>`
-- **Response thành công (200 OK):**
+### 💰 E. NHÓM API PAPER TRADING (GIAO DỊCH GIẢ LẬP)
+*(Yêu cầu Header `Authorization: Bearer <token>`)*
+* `POST /api/trade/order` : Đặt lệnh Mua/Bán giả lập.
+* `GET /api/trade/portfolio` : Xem tổng quan tài sản ròng, tiền mặt, danh mục đang giữ và PnL.
+* `GET /api/trade/history` : Xem toàn bộ lịch sử giao dịch Mua/Bán.
+
+**Body mẫu `POST /api/trade/order`:**
 ```json
 {
-  "token": "eyJhbGciOiJIUzI1NiJ9...",
-  "tokenType": "Bearer",
-  "user": {
-    "id": 1,
-    "email": "user@fnmf.com",
-    "fullName": "Nguyen Van A",
-    "avatarUrl": null,
-    "createdAt": "2026-08-19T01:34:18"
-  },
-  "wallet": {
-    "id": 1,
-    "userId": 1,
-    "balanceUsd": 10000.0000,
-    "initialBalance": 10000.0000
-  },
-  "message": "Lấy thông tin tài khoản thành công!"
+  "symbol": "BTCUSDT",
+  "type": "BUY",
+  "quantity": 0.05
 }
 ```
-
----
-
-## 🔒 5. Bảo mật & Quy tắc nghiệp vụ
-- Mọi mật khẩu người dùng đều được băm bằng thuật toán **BCrypt** trước khi lưu vào CSDL.
-- Token JWT có thời hạn sử dụng 24 giờ.
-- Cơ chế chặn trùng lặp Email và validate định dạng dữ liệu đầu vào chặt chẽ.
+hoặc
+```json
+{
+  "symbol": "BTCUSDT",
+  "type": "SELL",
+  "quantity": 0.02
+}
+```

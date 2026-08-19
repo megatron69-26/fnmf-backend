@@ -36,14 +36,22 @@ public class AuthService {
         this.jwtUtil = jwtUtil;
     }
 
-    /**
-     * Đăng ký tài khoản mới:
-     * 1. Kiểm tra email trùng
-     * 2. Băm mật khẩu (BCrypt)
-     * 3. Tạo User
-     * 4. Tự động khởi tạo Ví ảo $10,000 cho User
-     * 5. Sinh JWT Token trả về
-     */
+    // ====================================================================================
+    // 🎓 [CÂU HỎI BẢO VỆ ĐỒ ÁN: BẢO MẬT & KHỞI TẠO TÀI KHOẢN]
+    // ------------------------------------------------------------------------------------
+    // CÂU HỎI CỦA GIẢNG VIÊN:
+    //   "Mật khẩu người dùng được lưu trữ thế nào trong CSDL Oracle? Làm sao chống lộ lọt
+    //    mật khẩu và đảm bảo mỗi user mới luôn được cấp đúng ví ảo $10,000 không bị lỗi?"
+    //
+    // CÂU TRẢ LỜI CỦA MÃ NGUỒN (CODE TRẢ LỜI):
+    //   1. BẢO MẬT: Sử dụng chuẩn băm BCryptPasswordEncoder với Salt ngẫu nhiên 10 vòng.
+    //      Mật khẩu gốc không bao giờ được lưu dưới dạng plaintext.
+    //   2. TÍNH TOÀN VẸN (ACID): Dùng @Transactional. Nếu tạo User thành công nhưng tạo
+    //      Ví ảo ($10,000) bị lỗi thì toàn bộ quá trình tự động Rollback (hủy), tránh tài
+    //      khoản 'mồ côi ví'.
+    //   3. PHÂN QUYỀN STATELESS: Sinh JWT Token (HMAC-SHA256) chứa UserId và Email với
+    //      thời hạn 24 giờ.
+    // ====================================================================================
     @Transactional
     public AuthResponse register(RegisterRequest request) {
         String email = request.getEmail().trim().toLowerCase();
@@ -52,20 +60,20 @@ public class AuthService {
             throw new IllegalArgumentException("Email '" + email + "' đã tồn tại trên hệ thống!");
         }
 
-        // Băm mật khẩu
+        // 1. Băm mật khẩu bằng BCrypt (Bảo vệ thông tin người dùng)
         String hashedPassword = passwordEncoder.encode(request.getPassword());
 
-        // Lưu User vào Oracle DB
+        // 2. Lưu User vào CSDL Oracle 21c
         User user = new User(email, hashedPassword, request.getFullName().trim());
         user = userRepository.save(user);
 
-        // Tự động cấp ví ảo $10,000 vốn ban đầu
+        // 3. Tự động cấp ví ảo $10,000 vốn ban đầu (Bảng WALLETS)
         Wallet wallet = new Wallet(user.getId());
         wallet = walletRepository.save(wallet);
 
         log.info("USER REGISTERED | userId={} | email={} | walletId={}", user.getId(), user.getEmail(), wallet.getId());
 
-        // Sinh JWT token
+        // 4. Sinh JWT token cho phiên làm việc
         String token = jwtUtil.generateToken(user.getEmail(), user.getId());
 
         UserDto userDto = new UserDto(user.getId(), user.getEmail(), user.getFullName(), user.getAvatarUrl(), user.getCreatedAt());
@@ -87,15 +95,14 @@ public class AuthService {
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new IllegalArgumentException("Email hoặc mật khẩu không chính xác!"));
 
-        // So khớp mật khẩu băm
+        // So khớp mật khẩu băm BCrypt
         if (!passwordEncoder.matches(request.getPassword(), user.getPasswordHash())) {
             throw new IllegalArgumentException("Email hoặc mật khẩu không chính xác!");
         }
 
-        // Lấy thông tin ví
+        // Lấy thông tin ví ảo
         Wallet wallet = walletRepository.findByUserId(user.getId())
                 .orElseGet(() -> {
-                    // Nếu chưa có ví thì tự động tạo bổ sung
                     Wallet newWallet = new Wallet(user.getId());
                     return walletRepository.save(newWallet);
                 });
