@@ -1,46 +1,39 @@
-# FNMF Backend & AI Gateway
+# 🚀 FNMF Backend & AI Gateway
 **Financial News & Market Forecasting (FNMF)**  
 *Backend REST API, Oracle Database & AI Processing Layer*
 
 - **Người thực hiện:** Đặng Đức Khôi (Backend / Data Developer)
 - **Công nghệ cốt lõi:** Java 17, Spring Boot 3.3.5, Spring Data JPA, Oracle Database 21c, Spring Security (BCrypt), JJWT, Alpha Vantage API, Gemini AI.
+- **Base URL:** `http://localhost:8082`
 
 ---
 
-## 📌 1. Tổng quan & Các tính năng hoàn thành (Tuần 1 & Tuần 2)
+## 📌 1. Bảng ánh xạ Module, Endpoint & File mã nguồn (Source Code Mapping)
 
-Dự án Backend đóng vai trò làm trung tâm xử lý nghiệp vụ, quản lý dữ liệu và cầu nối AI cho toàn bộ ứng dụng di động FNMF:
-
-1. **Xác thực & Bảo mật (Auth Module):**
-   - Đăng ký, Đăng nhập với mật khẩu mã hóa một chiều **BCrypt**.
-   - Cấp vé thông hành định danh **JWT Bearer Token** (thời hạn 24h).
-   - Tự động khởi tạo và cấp ví vốn ảo mặc định **$10,000.00** cho mỗi người dùng mới.
-
-2. **Dữ liệu Thị trường Thời gian thực (Market Data & Candlestick):**
-   - Tích hợp **Alpha Vantage API** lấy giá thời gian thực của Bitcoin, Ethereum, Vàng thế giới (XAUUSD), Dầu thô WTI (USOIL).
-   - Cung cấp chuỗi nến lịch sử **OHLCV** (Open, High, Low, Close, Volume) để Android vẽ Candlestick Chart.
-   - Cung cấp dòng tin tức tài chính kinh tế thế giới (`NEWS_SENTIMENT`).
-
-3. **Phân tích Tin tức Tài chính bằng AI (Gemini AI Sentiment & Cache):**
-   - Tự động tóm tắt 3-5 gạch đầu dòng trọng tâm của bài báo kinh tế.
-   - Gán nhãn xu hướng: `BULLISH` (Tăng/Cơ hội), `BEARISH` (Giảm/Rủi ro), `NEUTRAL` (Trung lập) kèm % độ tin cậy và lý do.
-   - **Cơ chế Caching Oracle DB:** Lưu bài báo đã phân tích vào bảng `NEWS_AI_CACHE`, tái sử dụng kết quả trong < 5ms (chống tốn quota AI).
-
-4. **Quản lý Danh mục Theo dõi (Watchlist CRUD):**
-   - Thêm, xem, xóa các mã tài sản yêu thích vào bảng `WATCHLISTS`, tự động đính kèm giá thị trường và biến động 24h.
-
-5. **Giao dịch Giả lập (Paper Trading & Quản lý Danh mục):**
-   - Đặt lệnh **MUA (BUY)** và **BÁN (SELL)** với giá thị trường thời gian thực.
-   - Kiểm tra số dư ví ảo $\rightarrow$ Trừ/cộng tiền trong bảng `WALLETS`.
-   - Tính toán giá vốn trung bình và khối lượng trong bảng `HOLDINGS`.
-   - Ghi nhận lịch sử giao dịch vào bảng `TRANSACTIONS`.
-   - Tính toán tổng tài sản ròng (**Net Worth**) và tỷ lệ **Lời/Lỗ (PnL)** thời gian thực.
+| Module | Chức năng | Phương thức & Đường dẫn API | File Controller & Service |
+| :--- | :--- | :--- | :--- |
+| **Auth** | Đăng ký & Cấp ví $10,000 | `POST /api/auth/register` | `AuthController.java` / `AuthService.java` |
+| **Auth** | Đăng nhập & Nhận JWT | `POST /api/auth/login` | `AuthController.java` / `AuthService.java` |
+| **Auth** | Xem thông tin User & Số dư | `GET /api/auth/me` | `AuthController.java` / `AuthService.java` |
+| **Market** | Giá thời gian thực (BTC, ETH, Vàng, Dầu) | `GET /api/market/prices` | `MarketController.java` / `MarketDataService.java` |
+| **Market** | Giá 1 mã cụ thể | `GET /api/market/price/{symbol}` | `MarketController.java` / `MarketDataService.java` |
+| **Market** | Chuỗi nến 30 ngày vẽ Chart | `GET /api/market/candles?symbol=BTCUSDT` | `MarketController.java` / `MarketDataService.java` |
+| **Market** | Dòng tin tức tài chính gốc | `GET /api/market/news?limit=10` | `MarketController.java` / `MarketDataService.java` |
+| **AI News** | **Pipeline AI News tự động (Alpha Vantage + Gemini + Oracle)** | `GET /api/news/feed?limit=5` | `NewsAiController.java` / `AiNewsService.java` |
+| **AI News** | Phân tích bài báo bất kỳ | `POST /api/news/analyze` | `NewsAiController.java` / `AiNewsService.java` |
+| **AI News** | Xem Cache bài báo trong CSDL Oracle | `GET /api/news/cache` | `NewsAiController.java` / `AiNewsService.java` |
+| **Watchlist** | Lấy danh mục theo dõi của User | `GET /api/watchlist` | `WatchlistController.java` / `WatchlistService.java` |
+| **Watchlist** | Thêm mã vào danh mục theo dõi | `POST /api/watchlist` | `WatchlistController.java` / `WatchlistService.java` |
+| **Watchlist** | Xóa mã khỏi danh mục theo dõi | `DELETE /api/watchlist/{symbol}` | `WatchlistController.java` / `WatchlistService.java` |
+| **Trade** | Đặt lệnh Mua/Bán giả lập (Paper Trading) | `POST /api/trade/order` | `TradeController.java` / `TradeService.java` |
+| **Trade** | Tổng quan tài sản & PnL thời gian thực | `GET /api/trade/portfolio` | `TradeController.java` / `TradeService.java` |
+| **Trade** | Lịch sử các lệnh đã khớp | `GET /api/trade/history` | `TradeController.java` / `TradeService.java` |
 
 ---
 
-## 🗄️ 2. Cấu trúc Cơ sở dữ liệu (Oracle Database)
+## 🗄️ 2. Cấu trúc Cơ sở dữ liệu (Oracle Database 21c)
 
-Hệ thống CSDL chạy trên **Oracle Database** (Schema: `KHOI2` / Connection: `khoi_mobile`) bao gồm 6 bảng:
+Hệ thống CSDL chạy trên **Oracle Database 21c** (`localhost:1521/orcl`, User `khoi2`) bao gồm 6 bảng:
 1. `USERS`: Lưu trữ tài khoản và mật khẩu đã băm (`password_hash`).
 2. `WALLETS`: Lưu trữ ví vốn ảo, số dư khả dụng và vốn khởi tạo ($10,000.00).
 3. `HOLDINGS`: Danh mục tài sản ảo đang nắm giữ (Vàng XAUUSD, Dầu USOIL, Bitcoin BTCUSDT...).
@@ -50,65 +43,102 @@ Hệ thống CSDL chạy trên **Oracle Database** (Schema: `KHOI2` / Connection
 
 ---
 
-## 📖 3. Tài liệu API (API Reference)
+## 📖 3. Chi tiết các Endpoint & Dữ liệu Mẫu (API Specifications)
 
-### 🔐 A. NHÓM API AUTH (XÁC THỰC)
-* `POST /api/auth/register` : Đăng ký tài khoản mới $\rightarrow$ Tự động cấp ví ảo $10,000.00.
-* `POST /api/auth/login` : Đăng nhập $\rightarrow$ Nhận JWT Bearer Token.
-* `GET /api/auth/me` : Lấy profile user và số dư ví (Header `Authorization: Bearer <token>`).
-
----
-
-### 📈 B. NHÓM API MARKET DATA (DỮ LIỆU THỊ TRƯỜNG)
-* `GET /api/market/prices` : Lấy giá thời gian thực của tất cả tài sản (BTC, ETH, Vàng, Dầu).
-* `GET /api/market/price/{symbol}` : Lấy giá của 1 mã cụ thể (ví dụ: `BTCUSDT`).
-* `GET /api/market/candles?symbol=BTCUSDT&interval=daily` : Lấy 30 cây nến OHLCV để vẽ biểu đồ.
-* `GET /api/market/news?limit=10` : Lấy dòng tin tức kinh tế mới nhất.
-
----
-
-### 🧠 C. NHÓM API AI NEWS & SENTIMENT
-* `POST /api/news/analyze` : Gửi bài báo để AI tóm tắt 3 ý + gán nhãn Bullish/Bearish.
-* `GET /api/news/cache` : Xem danh sách các bài báo đã được AI phân tích trong CSDL.
-
-**Body mẫu `POST /api/news/analyze`:**
-```json
-{
-  "title": "FED quyết định hạ lãi suất 0.5%",
-  "content": "Cục Dự trữ Liên bang Mỹ vừa hạ lãi suất...",
-  "symbol": "XAUUSD"
-}
-```
+### 🔐 A. MODULE XÁC THỰC (AUTH)
+* **`POST /api/auth/register`**
+  ```json
+  // Request Body:
+  {
+    "email": "khoi.pro@fnmf.com",
+    "password": "mypassword123",
+    "fullName": "Dang Duc Khoi"
+  }
+  ```
+* **`POST /api/auth/login`**
+  ```json
+  // Request Body:
+  {
+    "email": "khoi.pro@fnmf.com",
+    "password": "mypassword123"
+  }
+  ```
+* **`GET /api/auth/me`** (Header: `Authorization: Bearer <token>`)
 
 ---
 
-### 📋 D. NHÓM API WATCHLIST (DANH MỤC THEO DÕI)
-*(Yêu cầu Header `Authorization: Bearer <token>`)*
-* `GET /api/watchlist` : Lấy danh sách theo dõi của User.
-* `POST /api/watchlist` : Thêm mã mới vào danh mục (`{ "symbol": "BTCUSDT" }`).
-* `DELETE /api/watchlist/{symbol}` : Xóa mã khỏi danh mục.
+### 📈 B. MODULE DỮ LIỆU THỊ TRƯỜNG (MARKET DATA)
+* **`GET /api/market/prices`**: Trả về danh sách giá thời gian thực của BTC, ETH, XAUUSD, USOIL.
+* **`GET /api/market/candles?symbol=BTCUSDT&interval=daily`**: Trả về mảng 30 nến OHLCV:
+  ```json
+  [
+    {
+      "time": "2026-08-19",
+      "open": 64681.33,
+      "high": 64705.56,
+      "low": 64200.10,
+      "close": 64450.00,
+      "volume": 2840.5
+    }
+  ]
+  ```
 
 ---
 
-### 💰 E. NHÓM API PAPER TRADING (GIAO DỊCH GIẢ LẬP)
-*(Yêu cầu Header `Authorization: Bearer <token>`)*
-* `POST /api/trade/order` : Đặt lệnh Mua/Bán giả lập.
-* `GET /api/trade/portfolio` : Xem tổng quan tài sản ròng, tiền mặt, danh mục đang giữ và PnL.
-* `GET /api/trade/history` : Xem toàn bộ lịch sử giao dịch Mua/Bán.
+### 🧠 C. MODULE AI NEWS & SENTIMENT
+* **`GET /api/news/feed?limit=5`** *(Pipeline tự động 100%)*:
+  Tự động cào tin thật từ Alpha Vantage $\rightarrow$ Phân tích qua Gemini AI $\rightarrow$ Lưu Oracle DB `NEWS_AI_CACHE` $\rightarrow$ Trả về cho App.
+* **`POST /api/news/analyze`**:
+  ```json
+  // Request Body:
+  {
+    "title": "FED tuyên bố hạ lãi suất 0.5%",
+    "content": "Cục Dự trữ Liên bang Mỹ vừa quyết định giảm lãi suất cơ bản...",
+    "symbol": "XAUUSD"
+  }
+  ```
+* **`GET /api/news/cache`**: Xem toàn bộ tin tức đã được AI phân tích trong CSDL Oracle.
 
-**Body mẫu `POST /api/trade/order`:**
-```json
-{
-  "symbol": "BTCUSDT",
-  "type": "BUY",
-  "quantity": 0.05
-}
-```
-hoặc
-```json
-{
-  "symbol": "BTCUSDT",
-  "type": "SELL",
-  "quantity": 0.02
-}
-```
+---
+
+### 📋 D. MODULE WATCHLIST (DANH MỤC THEO DÕI)
+*(Yêu cầu Header: `Authorization: Bearer <token>`)*
+* **`GET /api/watchlist`**: Lấy danh mục theo dõi kèm giá nhảy thời gian thực.
+* **`POST /api/watchlist`**:
+  ```json
+  // Request Body:
+  {
+    "symbol": "ETHUSDT"
+  }
+  ```
+* **`DELETE /api/watchlist/{symbol}`**: Xóa mã khỏi danh mục theo dõi.
+
+---
+
+### 💰 E. MODULE PAPER TRADING (GIAO DỊCH GIẢ LẬP)
+*(Yêu cầu Header: `Authorization: Bearer <token>`)*
+* **`POST /api/trade/order`**:
+  ```json
+  // Lệnh MUA:
+  {
+    "symbol": "BTCUSDT",
+    "type": "BUY",
+    "quantity": 0.05
+  }
+  // Lệnh BÁN:
+  {
+    "symbol": "BTCUSDT",
+    "type": "SELL",
+    "quantity": 0.02
+  }
+  ```
+* **`GET /api/trade/portfolio`**: Xem tổng tài sản ròng (Net Worth), tiền mặt khả dụng và Lời/Lỗ (PnL) chi tiết.
+* **`GET /api/trade/history`**: Xem toàn bộ lịch sử các lệnh Mua/Bán đã khớp.
+
+---
+
+## 🛡️ 4. Cơ chế Phòng vệ An toàn (Circuit Breakers & Fallback)
+1. **In-Memory Cache (TTL 30s):** Bảo vệ giới hạn Rate Limit 5 calls/phút của Alpha Vantage.
+2. **Fallback Candlestick Generator:** Thuật toán sinh nến mô phỏng (Sin Wave + Random Walk) giúp Android luôn vẽ được biểu đồ khi mất kết nối Alpha Vantage.
+3. **2-Layer AI News Caching:** Cache bài báo trong CSDL Oracle, giảm độ trễ phản hồi xuống `< 5ms` và tiết kiệm chi phí AI.
+4. **Financial Heuristic Engine:** Tự động phân tích tâm lý thị trường khi mất kết nối tới Google Gemini, đảm bảo App Android không bao giờ bị Crash.
