@@ -25,7 +25,7 @@
 * **Cơ sở dữ liệu:** Oracle Database 21c Express Edition (`localhost:1521/orcl`).
   * **Username:** `khoi2`
   * **Password:** `khoi2`
-  * **6 Bảng CSDL đã tạo:** `USERS`, `WALLETS`, `HOLDINGS`, `TRANSACTIONS`, `WATCHLISTS`, `NEWS_AI_CACHE`.
+  * **7 Bảng CSDL đã tạo:** `USERS`, `WALLETS`, `HOLDINGS`, `TRANSACTIONS`, `WATCHLISTS`, `NEWS_AI_CACHE`, `MARKET_FORECASTS`.
 * **API Keys & Dịch vụ bên ngoài:**
   * **Alpha Vantage API Key (Market Data & Real News):** `ZRA0HCT8FR32ID39` (URL: `https://www.alphavantage.co/query`)
   * **Google Gemini AI:** Model `gemini-2.0-flash` (Endpoint: `https://generativelanguage.googleapis.com/v1beta/openai/chat/completions`).
@@ -75,6 +75,18 @@
 
 ---
 
+### ✅ TUẦN 3: TÍNH NĂNG NÂNG CAO & DỰ BÁO THỊ TRƯỜNG AI
+
+#### 🔮 Module 1: Dự báo Xu hướng & Tín hiệu Giao dịch AI (AI Market Forecasting)
+* **`GET /api/forecast/{symbol}?timeframe=24H_7D`**: Lấy phân tích dự báo xu hướng đa chiều cho mã tài sản.
+* **`POST /api/forecast/analyze`**: Tạo hoặc làm mới bản dự báo thị trường AI (Body: `{ "symbol": "XAUUSD" }`).
+* **`GET /api/forecast/history/{symbol}`**: Xem lịch sử các bản dự báo AI trong quá khứ của mã tài sản.
+* **`GET /api/forecast/latest`**: Lấy 10 bản dự báo AI mới nhất trong CSDL Oracle.
+* **🧠 Cơ chế hoạt động:** Kết hợp **30 nến kỹ thuật (Module 1)** + **Tin tức tâm lý vĩ mô gần nhất (Module 2)** gửi sang Gemini AI để tính toán Vùng Hỗ trợ (Support), Kháng cự (Resistance), Xu hướng và Khuyến nghị (`STRONG_BUY`, `BUY`, `HOLD`, `SELL`, `STRONG_SELL`).
+* **🛡️ Cơ chế bảo vệ:** Cache CSDL Oracle 15 phút (bảng `MARKET_FORECASTS`) + **Heuristic Quantitative Forecaster** dự phòng khi mất kết nối AI.
+
+---
+
 ## 4. BỘ CÂU HỎI BẢO VỆ ĐỒ ÁN (DEFENSE Q&A CHEATSHEET)
 
 | Câu hỏi của Giảng viên | Cách trả lời chuẩn | File & Vị trí Code |
@@ -84,7 +96,7 @@
 | **3. Alpha Vantage giới hạn 5 req/phút?** | In-Memory Cache (TTL 30s) + Thuật toán sinh nến mô phỏng `generateFallbackCandles()`. | [`MarketDataService.java` (L40-L65)](file:///c:/Users/khoid/OneDrive/Desktop/llm-gateway2/src/main/java/com/llmgateway/service/MarketDataService.java#L40-L65) |
 | **4. Tính toàn vẹn khớp lệnh ví ảo?** | `@Transactional` của Spring JPA + Kiểm tra số dư nghiêm ngặt, tự động Rollback nếu 1 bước lỗi. | [`TradeService.java` (L45-L95)](file:///c:/Users/khoid/OneDrive/Desktop/llm-gateway2/src/main/java/com/llmgateway/service/TradeService.java#L45-L95) |
 | **5. Công thức tính DCA & PnL?** | `newAvgPrice = (oldCost + newCost) / newQty`. PnL = `(CurrentPrice - AvgPrice) * Qty`. | [`TradeService.java` (L75-L88)](file:///c:/Users/khoid/OneDrive/Desktop/llm-gateway2/src/main/java/com/llmgateway/service/TradeService.java#L75-L88) |
-| **6. Bảo mật mật khẩu & phân quyền?** | Băm BCrypt Salt 10 vòng + JWT HMAC-SHA256 Token 24h Stateless. | [`AuthService.java` (L40-L75)](file:///c:/Users/khoid/OneDrive/Desktop/llm-gateway2/src/main/java/com/llmgateway/service/AuthService.java#L40-L75) |
+| **6. Mô hình Dự báo AI hoạt động thế nào?** | Kết hợp đa tầng: Nến 30 ngày (Kỹ thuật) + Tin tức vĩ mô (Tâm lý) qua Gemini AI để xác định Hỗ trợ/Kháng cự và Khuyến nghị mua/bán. | [`ForecastService.java` (L45-L90)](file:///c:/Users/khoid/OneDrive/Desktop/llm-gateway2/src/main/java/com/llmgateway/service/ForecastService.java#L45-L90) |
 
 ---
 
