@@ -22,6 +22,7 @@
 ## 2. THÔNG SỐ MÔI TRƯỜNG & CẤU HÌNH HỆ THỐNG
 * **Ngôn ngữ & Framework:** Java 17 (Adoptium OpenJDK), Spring Boot 3.3.5, Maven.
 * **Cổng chạy Server:** `http://localhost:8082`
+* **Giao diện Tài liệu Swagger UI:** `http://localhost:8082/swagger-ui/index.html`
 * **Cơ sở dữ liệu:** Oracle Database 21c Express Edition (`localhost:1521/orcl`).
   * **Username:** `khoi2`
   * **Password:** `khoi2`
@@ -32,7 +33,7 @@
 
 ---
 
-## 3. TIẾN ĐỘ & TRẠNG THÁI CÁC MODULE (100% HOÀN THÀNH)
+## 3. TIẾN ĐỘ & TRẠNG THÁI CÁC MODULE (100% HOÀN THÀNH TOÀN BỘ 4 TUẦN)
 
 ### ✅ TUẦN 1: HỆ THỐNG XÁC THỰC, PHÂN QUYỀN & VÍ TIỀN ẢO ($10,000)
 1. **`POST /api/auth/register`**: Đăng ký tài khoản, mã hóa mật khẩu 1 chiều bằng `BCryptPasswordEncoder` (Salt 10 vòng), tự động khởi tạo Ví ảo $10,000 vốn ban đầu trong bảng `WALLETS`.
@@ -89,6 +90,18 @@
 
 ---
 
+### ✅ TUẦN 4: ĐÓNG GÓI, SWAGGER OPENAPI & HOÀN THIỆN ĐỒ ÁN
+1. **Swagger UI / OpenAPI 3.0 Integration:**
+   * Tích hợp `springdoc-openapi-starter-webmvc-ui` (v2.6.0).
+   * Tự động sinh tài liệu tại `http://localhost:8082/swagger-ui/index.html` với tính năng **Authorize JWT Bearer Token** trực tiếp trên web.
+2. **Postman Collection Export:**
+   * File [`fnmf_backend_postman_collection.json`](file:///c:/Users/khoid/OneDrive/Desktop/llm-gateway2/fnmf_backend_postman_collection.json) chứa toàn bộ 18 API có sẵn dữ liệu mẫu.
+3. **CORS & Global Exception Handling:**
+   * Cấu hình CORS mở toàn bộ trong `AppConfig.java` cho Android và Web.
+   * `GlobalExceptionHandler.java` bắt và chuẩn hóa mọi mã lỗi 400, 401, 500 thành JSON thân thiện.
+
+---
+
 ## 4. BỘ CÂU HỎI BẢO VỆ ĐỒ ÁN (DEFENSE Q&A CHEATSHEET)
 
 | Câu hỏi của Giảng viên | Cách trả lời chuẩn | File & Vị trí Code |
@@ -99,6 +112,7 @@
 | **4. Tính toàn vẹn khớp lệnh ví ảo?** | `@Transactional` của Spring JPA + Kiểm tra số dư nghiêm ngặt, tự động Rollback nếu 1 bước lỗi. | [`TradeService.java` (L45-L95)](file:///c:/Users/khoid/OneDrive/Desktop/llm-gateway2/src/main/java/com/llmgateway/service/TradeService.java#L45-L95) |
 | **5. Công thức tính DCA & PnL?** | `newAvgPrice = (oldCost + newCost) / newQty`. PnL = `(CurrentPrice - AvgPrice) * Qty`. | [`TradeService.java` (L75-L88)](file:///c:/Users/khoid/OneDrive/Desktop/llm-gateway2/src/main/java/com/llmgateway/service/TradeService.java#L75-L88) |
 | **6. Mô hình Dự báo AI hoạt động thế nào?** | Kết hợp đa tầng: Nến 30 ngày (Kỹ thuật) + Tin tức vĩ mô (Tâm lý) qua Gemini AI để xác định Hỗ trợ/Kháng cự và Khuyến nghị mua/bán. | [`ForecastService.java` (L45-L90)](file:///c:/Users/khoid/OneDrive/Desktop/llm-gateway2/src/main/java/com/llmgateway/service/ForecastService.java#L45-L90) |
+| **7. Tài liệu API được quản lý ra sao?** | Tự động sinh bởi OpenAPI 3.0 / Swagger UI tại `/swagger-ui/index.html` và bộ file Postman Collection JSON. | [`OpenApiConfig.java`](file:///c:/Users/khoid/OneDrive/Desktop/llm-gateway2/src/main/java/com/llmgateway/config/OpenApiConfig.java) |
 
 ---
 

@@ -1,0 +1,445 @@
+{
+	"info": {
+		"_postman_id": "fnmf-backend-api-collection-2026",
+		"name": "FNMF Backend & AI Gateway (Full Suite)",
+		"description": "Trọn bộ 18 REST APIs cho đồ án FNMF (Financial News & Market Forecasting). Bao gồm Auth, Market Data, AI News, Watchlist, Paper Trading và AI Forecasting.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "1. Authentication (Xác thực & Ví $10,000)",
+			"item": [
+				{
+					"name": "Đăng ký tài khoản mới (Auto cấp ví $10,000)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"khoi.pro@fnmf.com\",\n  \"password\": \"mypassword123\",\n  \"fullName\": \"Dang Duc Khoi\"\n}"
+						},
+						"url": {
+							"raw": "http://localhost:8082/api/auth/register",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "8082",
+							"path": ["api", "auth", "register"]
+						}
+					}
+				},
+				{
+					"name": "Đăng nhập (Nhận Bearer Token)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"khoi.pro@fnmf.com\",\n  \"password\": \"mypassword123\"\n}"
+						},
+						"url": {
+							"raw": "http://localhost:8082/api/auth/login",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "8082",
+							"path": ["api", "auth", "login"]
+						}
+					}
+				},
+				{
+					"name": "Lấy thông tin User & Số dư ví",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwt_token}}"
+							}
+						],
+						"url": {
+							"raw": "http://localhost:8082/api/auth/me",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "8082",
+							"path": ["api", "auth", "me"]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "2. Market Data (Giá & Nến Alpha Vantage)",
+			"item": [
+				{
+					"name": "Lấy giá thời gian thực (BTC, ETH, Vàng, Dầu)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "http://localhost:8082/api/market/prices",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "8082",
+							"path": ["api", "market", "prices"]
+						}
+					}
+				},
+				{
+					"name": "Lấy giá 1 mã cụ thể (BTCUSDT)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "http://localhost:8082/api/market/price/BTCUSDT",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "8082",
+							"path": ["api", "market", "price", "BTCUSDT"]
+						}
+					}
+				},
+				{
+					"name": "Lấy 30 cây nến OHLCV vẽ Chart (BTCUSDT)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "http://localhost:8082/api/market/candles?symbol=BTCUSDT&interval=daily",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "8082",
+							"path": ["api", "market", "candles"],
+							"query": [
+								{ "key": "symbol", "value": "BTCUSDT" },
+								{ "key": "interval", "value": "daily" }
+							]
+						}
+					}
+				},
+				{
+					"name": "Lấy dòng tin tức tài chính gốc",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "http://localhost:8082/api/market/news?limit=10",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "8082",
+							"path": ["api", "market", "news"],
+							"query": [{ "key": "limit", "value": "10" }]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "3. AI News Sentiment (Tin thật & Gemini AI)",
+			"item": [
+				{
+					"name": "Pipeline AI News tự động (Tin thật + Gemini + Oracle Cache)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "http://localhost:8082/api/news/feed?limit=5",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "8082",
+							"path": ["api", "news", "feed"],
+							"query": [{ "key": "limit", "value": "5" }]
+						}
+					}
+				},
+				{
+					"name": "Phân tích bài báo bất kỳ bằng AI",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"title\": \"FED tuyên bố cắt giảm lãi suất 0.5% để kích thích kinh tế\",\n  \"content\": \"Cục Dự trữ Liên bang Mỹ vừa quyết định hạ lãi suất cơ bản 50 điểm. Động thái này khiến USD suy yếu trong khi Vàng và Bitcoin tăng vọt.\",\n  \"symbol\": \"XAUUSD\"\n}"
+						},
+						"url": {
+							"raw": "http://localhost:8082/api/news/analyze",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "8082",
+							"path": ["api", "news", "analyze"]
+						}
+					}
+				},
+				{
+					"name": "Xem Cache bài báo trong CSDL Oracle",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "http://localhost:8082/api/news/cache",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "8082",
+							"path": ["api", "news", "cache"]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "4. Watchlist (Danh mục theo dõi cá nhân)",
+			"item": [
+				{
+					"name": "Lấy danh mục theo dõi của User",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwt_token}}"
+							}
+						],
+						"url": {
+							"raw": "http://localhost:8082/api/watchlist",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "8082",
+							"path": ["api", "watchlist"]
+						}
+					}
+				},
+				{
+					"name": "Bản tin AI chuyên sâu riêng cho các mã Watchlist",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwt_token}}"
+							}
+						],
+						"url": {
+							"raw": "http://localhost:8082/api/watchlist/ai-insights",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "8082",
+							"path": ["api", "watchlist", "ai-insights"]
+						}
+					}
+				},
+				{
+					"name": "Thêm mã mới vào Watchlist",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwt_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"symbol\": \"USOIL\"\n}"
+						},
+						"url": {
+							"raw": "http://localhost:8082/api/watchlist",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "8082",
+							"path": ["api", "watchlist"]
+						}
+					}
+				},
+				{
+					"name": "Xóa mã khỏi Watchlist",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwt_token}}"
+							}
+						],
+						"url": {
+							"raw": "http://localhost:8082/api/watchlist/USOIL",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "8082",
+							"path": ["api", "watchlist", "USOIL"]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "5. Paper Trading (Giao dịch giả lập ví ảo)",
+			"item": [
+				{
+					"name": "Đặt lệnh MUA (BUY 0.05 BTC)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwt_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"symbol\": \"BTCUSDT\",\n  \"type\": \"BUY\",\n  \"quantity\": 0.05\n}"
+						},
+						"url": {
+							"raw": "http://localhost:8082/api/trade/order",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "8082",
+							"path": ["api", "trade", "order"]
+						}
+					}
+				},
+				{
+					"name": "Đặt lệnh BÁN (SELL 0.02 BTC)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwt_token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"symbol\": \"BTCUSDT\",\n  \"type\": \"SELL\",\n  \"quantity\": 0.02\n}"
+						},
+						"url": {
+							"raw": "http://localhost:8082/api/trade/order",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "8082",
+							"path": ["api", "trade", "order"]
+						}
+					}
+				},
+				{
+					"name": "Xem tổng quan tài sản ròng & PnL thời gian thực",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwt_token}}"
+							}
+						],
+						"url": {
+							"raw": "http://localhost:8082/api/trade/portfolio",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "8082",
+							"path": ["api", "trade", "portfolio"]
+						}
+					}
+				},
+				{
+					"name": "Xem lịch sử tất cả các lệnh đã khớp",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwt_token}}"
+							}
+						],
+						"url": {
+							"raw": "http://localhost:8082/api/trade/history",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "8082",
+							"path": ["api", "trade", "history"]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "6. AI Market Forecasting (Dự báo thị trường AI)",
+			"item": [
+				{
+					"name": "Xem Dự báo xu hướng AI (BTCUSDT)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "http://localhost:8082/api/forecast/BTCUSDT",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "8082",
+							"path": ["api", "forecast", "BTCUSDT"]
+						}
+					}
+				},
+				{
+					"name": "Tạo bản Dự báo AI cho Vàng (XAUUSD)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"symbol\": \"XAUUSD\",\n  \"timeframe\": \"24H_7D\"\n}"
+						},
+						"url": {
+							"raw": "http://localhost:8082/api/forecast/analyze",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "8082",
+							"path": ["api", "forecast", "analyze"]
+						}
+					}
+				},
+				{
+					"name": "Xem 10 bản Dự báo AI mới nhất trong CSDL Oracle",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "http://localhost:8082/api/forecast/latest",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "8082",
+							"path": ["api", "forecast", "latest"]
+						}
+					}
+				}
+			]
+		}
+	]
+}

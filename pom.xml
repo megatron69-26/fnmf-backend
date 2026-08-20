@@ -15,8 +15,8 @@
     <groupId>com.llmgateway</groupId>
     <artifactId>llm-gateway</artifactId>
     <version>0.0.1-SNAPSHOT</version>
-    <name>LLM Gateway</name>
-    <description>A simple LLM API proxy/gateway for learning Cloud</description>
+    <name>FNMF Backend</name>
+    <description>Financial News and Market Forecasting Backend REST API with Oracle Database and AI Gateway</description>
 
     <properties>
         <java.version>17</java.version>
@@ -70,6 +70,13 @@
             <artifactId>jjwt-jackson</artifactId>
             <version>0.11.5</version>
             <scope>runtime</scope>
+        </dependency>
+
+        <!-- OpenAPI 3.0 & Swagger UI for Auto-generated API Documentation -->
+        <dependency>
+            <groupId>org.springdoc</groupId>
+            <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+            <version>2.6.0</version>
         </dependency>
 
         <!-- Spring Boot Test -->

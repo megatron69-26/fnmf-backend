@@ -3,8 +3,9 @@
 *Backend REST API, Oracle Database & AI Processing Layer*
 
 - **Người thực hiện:** Đặng Đức Khôi (Backend / Data Developer)
-- **Công nghệ cốt lõi:** Java 17, Spring Boot 3.3.5, Spring Data JPA, Oracle Database 21c, Spring Security (BCrypt), JJWT, Alpha Vantage API, Gemini AI.
+- **Công nghệ cốt lõi:** Java 17, Spring Boot 3.3.5, Spring Data JPA, Oracle Database 21c, Spring Security (BCrypt), JJWT, Alpha Vantage API, Gemini AI, OpenAPI 3.0 / Swagger UI.
 - **Base URL:** `http://localhost:8082`
+- **Swagger UI (Tài liệu API tương tác):** `http://localhost:8082/swagger-ui/index.html`
 
 ---
 
@@ -49,27 +50,15 @@ Hệ thống CSDL chạy trên **Oracle Database 21c** (`localhost:1521/orcl`, U
 
 ---
 
-## 📖 3. Chi tiết các Endpoint & Dữ liệu Mẫu (API Specifications)
-
-### 📋 D. MODULE WATCHLIST (DANH MỤC THEO DÕI)
-*(Yêu cầu Header: `Authorization: Bearer <token>`)*
-* **`GET /api/watchlist`**: Lấy danh mục theo dõi kèm giá nhảy thời gian thực (0 Token AI).
-* **`GET /api/watchlist/ai-insights`** *(TÍNH NĂNG CÁ NHÂN HÓA)*:
-  Tự động quét toàn bộ các mã trong Watchlist của User $\rightarrow$ Gọi Gemini AI để lấy Dự báo chiến lược + Tin tức tóm tắt riêng cho danh mục yêu thích của User đó.
-* **`POST /api/watchlist`**:
-  ```json
-  // Request Body:
-  {
-    "symbol": "ETHUSDT"
-  }
-  ```
-* **`DELETE /api/watchlist/{symbol}`**: Xóa mã khỏi danh mục theo dõi.
-
----
-
-## 🛡️ 4. Cơ chế Phòng vệ An toàn (Circuit Breakers & Fallback)
+## 🛡️ 3. Cơ chế Phòng vệ An toàn (Circuit Breakers & Fallback)
 1. **In-Memory Cache (TTL 30s):** Bảo vệ giới hạn Rate Limit 5 calls/phút của Alpha Vantage.
 2. **Fallback Candlestick Generator:** Thuật toán sinh nến mô phỏng (Sin Wave + Random Walk) giúp Android luôn vẽ được biểu đồ khi mất kết nối Alpha Vantage.
 3. **2-Layer AI News Caching:** Cache bài báo trong CSDL Oracle, giảm độ trễ phản hồi xuống `< 5ms` và tiết kiệm chi phí AI.
 4. **Financial Heuristic Engine:** Tự động phân tích tâm lý thị trường khi mất kết nối tới Google Gemini.
 5. **Heuristic Quantitative Forecaster:** Tự động tính toán vùng Hỗ trợ/Kháng cự và Xu hướng khi mất kết nối Gemini, đảm bảo Server luôn đạt 100% Uptime.
+
+---
+
+## 📂 4. Tài nguyên Đính kèm
+* **Postman Collection:** [`fnmf_backend_postman_collection.json`](file:///c:/Users/khoid/OneDrive/Desktop/llm-gateway2/fnmf_backend_postman_collection.json) (Import vào Postman để test toàn bộ 18 API).
+* **Swagger UI:** Truy cập trực tiếp tại `http://localhost:8082/swagger-ui/index.html`.
