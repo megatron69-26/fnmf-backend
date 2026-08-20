@@ -23,6 +23,7 @@
 | **AI News** | Phân tích bài báo bất kỳ | `POST /api/news/analyze` | `NewsAiController.java` / `AiNewsService.java` |
 | **AI News** | Xem Cache bài báo trong CSDL Oracle | `GET /api/news/cache` | `NewsAiController.java` / `AiNewsService.java` |
 | **Watchlist** | Lấy danh mục theo dõi của User | `GET /api/watchlist` | `WatchlistController.java` / `WatchlistService.java` |
+| **Watchlist** | **Bản tin AI chuyên sâu (Dự báo + Tin tức) cho riêng các mã Watchlist** | `GET /api/watchlist/ai-insights` | `WatchlistController.java` / `WatchlistService.java` |
 | **Watchlist** | Thêm mã vào danh mục theo dõi | `POST /api/watchlist` | `WatchlistController.java` / `WatchlistService.java` |
 | **Watchlist** | Xóa mã khỏi danh mục theo dõi | `DELETE /api/watchlist/{symbol}` | `WatchlistController.java` / `WatchlistService.java` |
 | **Trade** | Đặt lệnh Mua/Bán giả lập (Paper Trading) | `POST /api/trade/order` | `TradeController.java` / `TradeService.java` |
@@ -50,38 +51,19 @@ Hệ thống CSDL chạy trên **Oracle Database 21c** (`localhost:1521/orcl`, U
 
 ## 📖 3. Chi tiết các Endpoint & Dữ liệu Mẫu (API Specifications)
 
-### 🔮 F. MODULE DỰ BÁO THỊ TRƯỜNG & TÍN HIỆU ĐẦU TƯ AI (FORECASTING)
-* **`GET /api/forecast/{symbol}?timeframe=24H_7D`** (Ví dụ: `GET /api/forecast/BTCUSDT`):
-  ```json
-  {
-    "symbol": "BTCUSDT",
-    "assetName": "Bitcoin",
-    "currentPrice": 69653.74,
-    "trendPrediction": "BULLISH_UPTREND",
-    "timeframe": "24H_7D",
-    "supportLevel": 67215.86,
-    "resistanceLevel": 72788.16,
-    "recommendation": "STRONG_BUY",
-    "confidenceScore": 92,
-    "keyDrivers": [
-      "Giá Bitcoin ($69653.74) đang vận động trên vùng hỗ trợ kỹ thuật $67215.86.",
-      "Tâm lý tin tức vĩ mô ghi nhận 7 tín hiệu tích cực và 0 tín hiệu rủi ro.",
-      "Khuyến nghị chiến lược: Phù hợp giải ngân tỷ trọng theo xu hướng BULLISH_UPTREND."
-    ],
-    "technicalOutlook": "Đồ thị nến duy trì dao động tích lũy quanh ngưỡng trung bình động 20 ngày.",
-    "fundamentalOutlook": "Bối cảnh vĩ mô quốc tế tiếp tục chi phối tâm lý dòng tiền ngắn hạn.",
-    "fromCache": true,
-    "createdAt": "2026-08-20T14:26:47"
-  }
-  ```
-* **`POST /api/forecast/analyze`**:
+### 📋 D. MODULE WATCHLIST (DANH MỤC THEO DÕI)
+*(Yêu cầu Header: `Authorization: Bearer <token>`)*
+* **`GET /api/watchlist`**: Lấy danh mục theo dõi kèm giá nhảy thời gian thực (0 Token AI).
+* **`GET /api/watchlist/ai-insights`** *(TÍNH NĂNG CÁ NHÂN HÓA)*:
+  Tự động quét toàn bộ các mã trong Watchlist của User $\rightarrow$ Gọi Gemini AI để lấy Dự báo chiến lược + Tin tức tóm tắt riêng cho danh mục yêu thích của User đó.
+* **`POST /api/watchlist`**:
   ```json
   // Request Body:
   {
-    "symbol": "XAUUSD",
-    "timeframe": "24H_7D"
+    "symbol": "ETHUSDT"
   }
   ```
+* **`DELETE /api/watchlist/{symbol}`**: Xóa mã khỏi danh mục theo dõi.
 
 ---
 

@@ -1,6 +1,10 @@
 package com.llmgateway.service;
 
+import com.llmgateway.dto.forecast.ForecastRequest;
+import com.llmgateway.dto.forecast.ForecastResponse;
 import com.llmgateway.dto.market.MarketPriceDto;
+import com.llmgateway.dto.news.NewsFeedItemDto;
+import com.llmgateway.dto.watchlist.WatchlistAiInsightDto;
 import com.llmgateway.dto.watchlist.WatchlistItemDto;
 import com.llmgateway.dto.watchlist.WatchlistRequest;
 import com.llmgateway.entity.Watchlist;
@@ -22,10 +26,17 @@ public class WatchlistService {
 
     private final WatchlistRepository watchlistRepository;
     private final MarketDataService marketDataService;
+    private final ForecastService forecastService;
+    private final AiNewsService aiNewsService;
 
-    public WatchlistService(WatchlistRepository watchlistRepository, MarketDataService marketDataService) {
+    public WatchlistService(WatchlistRepository watchlistRepository,
+                            MarketDataService marketDataService,
+                            ForecastService forecastService,
+                            AiNewsService aiNewsService) {
         this.watchlistRepository = watchlistRepository;
         this.marketDataService = marketDataService;
+        this.forecastService = forecastService;
+        this.aiNewsService = aiNewsService;
     }
 
     // ====================================================================================
@@ -62,6 +73,42 @@ public class WatchlistService {
         }
 
         return result;
+    }
+
+    /**
+     * 🎯 [TÍNH NĂNG CÁ NHÂN HÓA CAO CẤP]:
+     * CHỈ GỌI GEMINI AI ĐỂ TÓM TẮT TIN TỨC & DỰ BÁO CHIẾN LƯỢC CHO CÁC MÃ USER ĐÃ TÍCH QUAN TÂM (WATCHLIST)!
+     * - Tránh lãng phí Token cho các mã User không quan tâm.
+     * - Cung cấp bản tin tài chính tổng hợp chuyên sâu cho danh mục của riêng User đó.
+     */
+    public List<WatchlistAiInsightDto> getWatchlistAiInsights(Long userId) {
+        List<Watchlist> items = watchlistRepository.findByUserIdOrderByDisplayOrderAsc(userId);
+        List<WatchlistAiInsightDto> insights = new ArrayList<>();
+
+        for (Watchlist w : items) {
+            String symbol = w.getSymbol();
+            MarketPriceDto priceDto = marketDataService.getPriceBySymbol(symbol);
+
+            // 1. Chỉ gọi AI Dự báo chiến lược cho mã User đang theo dõi
+            ForecastRequest forecastReq = new ForecastRequest(symbol, "24H_7D");
+            ForecastResponse forecast = forecastService.generateForecast(forecastReq);
+
+            // 2. Chỉ lấy các bài báo AI liên quan trực tiếp đến mã User đang theo dõi
+            List<NewsFeedItemDto> newsList = aiNewsService.getLiveAiNewsFeed(symbol, 2);
+
+            insights.add(new WatchlistAiInsightDto(
+                    w.getId(),
+                    symbol,
+                    priceDto != null ? priceDto.getName() : symbol,
+                    priceDto != null ? priceDto.getCategory() : "MARKET",
+                    priceDto != null ? priceDto.getPrice() : null,
+                    priceDto != null ? priceDto.getChange24h() : null,
+                    forecast,
+                    newsList
+            ));
+        }
+
+        return insights;
     }
 
     /**

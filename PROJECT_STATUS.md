@@ -61,7 +61,9 @@
 * **🛡️ Cơ chế bảo vệ:** **2-Layer Caching** (Oracle DB cache trả về trong < 5ms) + **Circuit Breaker Financial Heuristic Engine** (tự động phân tích theo từ khóa vĩ mô nếu Gemini bị lỗi/mất mạng).
 
 #### ⭐ Module 3: Quản lý Danh mục Theo dõi (Watchlist CRUD)
-* **`GET /api/watchlist`**: Lấy danh mục cá nhân của User (Bearer Token), tự động ghép giá thị trường và biến động 24h từ Alpha Vantage.
+* **`GET /api/watchlist`**: Lấy danh mục cá nhân của User (Bearer Token), tự động ghép giá thị trường và biến động 24h từ Alpha Vantage (0 Token AI).
+* **`GET /api/watchlist/ai-insights`** *(TÍNH NĂNG CÁ NHÂN HÓA)*:
+  Tự động quét toàn bộ các mã trong Watchlist của User $\rightarrow$ Gọi Gemini AI để lấy Dự báo chiến lược + Tin tức tóm tắt riêng cho danh mục yêu thích của User đó.
 * **`POST /api/watchlist`**: Thêm mã tài sản mới (Body: `{ "symbol": "ETHUSDT" }`), có kiểm tra chống trùng lặp.
 * **`DELETE /api/watchlist/{symbol}`**: Xóa mã khỏi danh mục theo dõi.
 

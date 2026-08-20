@@ -1,5 +1,6 @@
 package com.llmgateway.controller;
 
+import com.llmgateway.dto.watchlist.WatchlistAiInsightDto;
 import com.llmgateway.dto.watchlist.WatchlistItemDto;
 import com.llmgateway.dto.watchlist.WatchlistRequest;
 import com.llmgateway.service.WatchlistService;
@@ -44,6 +45,19 @@ public class WatchlistController {
         Long userId = extractUserId(authHeader);
         List<WatchlistItemDto> items = watchlistService.getUserWatchlist(userId);
         return ResponseEntity.ok(items);
+    }
+
+    /**
+     * GET /api/watchlist/ai-insights
+     * 🎯 Lấy bản tin AI chuyên sâu (Dự báo chiến lược + Tin tức tóm tắt AI)
+     * DÀNH RIÊNG CHO CÁC MÃ USER ĐÃ TÍCH QUAN TÂM TRONG WATCHLIST!
+     */
+    @GetMapping("/ai-insights")
+    public ResponseEntity<List<WatchlistAiInsightDto>> getWatchlistAiInsights(
+            @RequestHeader(value = "Authorization", required = false) String authHeader) {
+        Long userId = extractUserId(authHeader);
+        List<WatchlistAiInsightDto> insights = watchlistService.getWatchlistAiInsights(userId);
+        return ResponseEntity.ok(insights);
     }
 
     /**
