@@ -7,8 +7,11 @@ import io.swagger.v3.oas.models.info.Info;
 import io.swagger.v3.oas.models.info.License;
 import io.swagger.v3.oas.models.security.SecurityRequirement;
 import io.swagger.v3.oas.models.security.SecurityScheme;
+import io.swagger.v3.oas.models.servers.Server;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+
+import java.util.List;
 
 @Configuration
 public class OpenApiConfig {
@@ -18,6 +21,8 @@ public class OpenApiConfig {
     @Bean
     public OpenAPI customOpenAPI() {
         return new OpenAPI()
+                // Cấu hình Server URL tương đối "/" để Swagger UI tự động khớp theo HTTPS của Cloudflare hoặc HTTP của localhost
+                .servers(List.of(new Server().url("/").description("Current Active Host (Auto HTTPS / HTTP)")))
                 .info(new Info()
                         .title("FNMF - Financial News & Market Forecasting REST API")
                         .description("Tài liệu đặc tả toàn bộ REST API cho Hệ thống Backend FNMF (Bao gồm Xác thực Auth, Dữ liệu Thị trường Alpha Vantage, Phân tích Tin tức Gemini AI, Danh mục Theo dõi Watchlist, Giao dịch Giả lập Paper Trading và Dự báo Thị trường AI).")
