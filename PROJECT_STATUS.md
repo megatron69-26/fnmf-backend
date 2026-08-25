@@ -95,10 +95,18 @@
    * Tích hợp `springdoc-openapi-starter-webmvc-ui` (v2.6.0).
    * Tự động sinh tài liệu tại `http://localhost:8082/swagger-ui/index.html` với tính năng **Authorize JWT Bearer Token** trực tiếp trên web.
 2. **Postman Collection Export:**
-   * File [`fnmf_backend_postman_collection.json`](file:///c:/Users/khoid/OneDrive/Desktop/llm-gateway2/fnmf_backend_postman_collection.json) chứa toàn bộ 18 API có sẵn dữ liệu mẫu.
+   * File [`fnmf_backend_postman_collection.json`](file:///c:/Users/khoid/OneDrive/Desktop/llm-gateway2/fnmf_backend_postman_collection.json) chứa toàn bộ 21 API có sẵn dữ liệu mẫu.
 3. **CORS & Global Exception Handling:**
    * Cấu hình CORS mở toàn bộ trong `AppConfig.java` cho Android và Web.
    * `GlobalExceptionHandler.java` bắt và chuẩn hóa mọi mã lỗi 400, 401, 500 thành JSON thân thiện.
+
+---
+
+### ✅ RELEASE V1.2.0: MODULE ĐỒNG BỘ MOBILE ROOM DATABASE (MOBILE SYNC)
+* **`GET /api/mobile/news/sync`**: Trả về Bundle `{ news, aiAnalysis }` chuẩn hóa cho Android Room DB của bạn Mạnh.
+* **`GET /api/mobile/news/{newsId}`**: Tra cứu bài báo theo `newsId` dạng chuỗi `"NEWS_xxx"`.
+* **`GET /api/mobile/news/analysis-only`**: Chỉ lấy bảng phân tích tâm lý thị trường cho Room DB.
+* **Kiến trúc 2 tầng (2-Tier Cache):** Server Oracle Database 21c (Khôi) $\leftrightarrow$ Mobile Room Database SQLite (Mạnh) $\rightarrow$ Hỗ trợ chế độ xem Ngoại tuyến (Offline Mode) 100% khi mất mạng.
 
 ---
 
