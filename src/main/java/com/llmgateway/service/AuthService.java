@@ -54,24 +54,35 @@ public class AuthService {
     // ====================================================================================
     @Transactional
     public AuthResponse register(RegisterRequest request) {
-        String email = request.getEmail().trim().toLowerCase();
+        String identifier = request.getUsername();
+        if (identifier == null || identifier.isBlank()) {
+            identifier = request.getEmail();
+        }
+        if (identifier == null || identifier.isBlank()) {
+            throw new IllegalArgumentException("Tên đăng nhập không được để trống!");
+        }
+        identifier = identifier.trim().toLowerCase();
 
-        if (userRepository.existsByEmail(email)) {
-            throw new IllegalArgumentException("Email '" + email + "' đã tồn tại trên hệ thống!");
+        if (userRepository.existsByEmail(identifier)) {
+            throw new IllegalArgumentException("Tài khoản '" + identifier + "' đã tồn tại trên hệ thống!");
         }
 
         // 1. Băm mật khẩu bằng BCrypt (Bảo vệ thông tin người dùng)
         String hashedPassword = passwordEncoder.encode(request.getPassword());
 
-        // 2. Lưu User vào CSDL Oracle 21c
-        User user = new User(email, hashedPassword, request.getFullName().trim());
+        // 2. Lưu User vào CSDL Oracle/H2
+        String fullName = request.getFullName();
+        if (fullName == null || fullName.isBlank()) {
+            fullName = identifier;
+        }
+        User user = new User(identifier, hashedPassword, fullName.trim());
         user = userRepository.save(user);
 
         // 3. Tự động cấp ví ảo $10,000 vốn ban đầu (Bảng WALLETS)
         Wallet wallet = new Wallet(user.getId());
         wallet = walletRepository.save(wallet);
 
-        log.info("USER REGISTERED | userId={} | email={} | walletId={}", user.getId(), user.getEmail(), wallet.getId());
+        log.info("USER REGISTERED | userId={} | username={} | walletId={}", user.getId(), user.getEmail(), wallet.getId());
 
         // 4. Sinh JWT token cho phiên làm việc
         String token = jwtUtil.generateToken(user.getEmail(), user.getId());
@@ -84,36 +95,39 @@ public class AuthService {
 
     /**
      * Đăng nhập:
-     * 1. Tìm user theo email
+     * 1. Tìm user theo username/email
      * 2. Kiểm tra mật khẩu băm
      * 3. Lấy thông tin ví ảo
      * 4. Sinh JWT Token
      */
     public AuthResponse login(LoginRequest request) {
-        String email = request.getEmail().trim().toLowerCase();
+        String identifier = request.getUsername();
+        if (identifier == null || identifier.isBlank()) {
+            identifier = request.getEmail();
+        }
+        if (identifier == null || identifier.isBlank()) {
+            throw new IllegalArgumentException("Tên đăng nhập không được để trống!");
+        }
+        identifier = identifier.trim().toLowerCase();
 
-        User user = userRepository.findByEmail(email)
-                .orElseThrow(() -> new IllegalArgumentException("Email hoặc mật khẩu không chính xác!"));
+        User user = userRepository.findByEmail(identifier)
+                .orElseThrow(() -> new IllegalArgumentException("Tài khoản hoặc mật khẩu không chính xác!"));
 
-        // So khớp mật khẩu băm BCrypt
         if (!passwordEncoder.matches(request.getPassword(), user.getPasswordHash())) {
-            throw new IllegalArgumentException("Email hoặc mật khẩu không chính xác!");
+            throw new IllegalArgumentException("Tài khoản hoặc mật khẩu không chính xác!");
         }
 
-        // Lấy thông tin ví ảo
         Wallet wallet = walletRepository.findByUserId(user.getId())
                 .orElseGet(() -> {
                     Wallet newWallet = new Wallet(user.getId());
                     return walletRepository.save(newWallet);
                 });
 
-        log.info("USER LOGGED IN | userId={} | email={}", user.getId(), user.getEmail());
-
-        // Sinh JWT token
         String token = jwtUtil.generateToken(user.getEmail(), user.getId());
-
         UserDto userDto = new UserDto(user.getId(), user.getEmail(), user.getFullName(), user.getAvatarUrl(), user.getCreatedAt());
         WalletDto walletDto = new WalletDto(wallet.getId(), wallet.getUserId(), wallet.getBalanceUsd(), wallet.getInitialBalance());
+
+        log.info("USER LOGGED IN | userId={} | username={}", user.getId(), user.getEmail());
 
         return new AuthResponse(token, userDto, walletDto, "Đăng nhập thành công!");
     }

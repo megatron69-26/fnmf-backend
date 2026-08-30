@@ -47,6 +47,13 @@
             <artifactId>ojdbc11</artifactId>
         </dependency>
 
+        <!-- H2 Embedded Database (for Standalone 24/7 Phone Deployment) -->
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
         <!-- Spring Security Crypto for BCrypt Password Hashing -->
         <dependency>
             <groupId>org.springframework.security</groupId>

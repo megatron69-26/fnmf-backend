@@ -191,8 +191,8 @@ public class ForecastService {
               "recommendation": "BUY",
               "confidenceScore": 88,
               "keyDrivers": ["Luận điểm 1", "Luận điểm 2", "Luận điểm 3"],
-              "technicalOutlook": "Nhận định ngắn gọn về đồ thị nến.",
-              "fundamentalOutlook": "Nhận định ngắn gọn về tin tức kinh tế vĩ mô."
+              "technicalOutlook": "Kế hoạch giao dịch thực chiến (Action Plan): Đưa ra chiến lược mua/bán cụ thể dựa vào nến và các mốc Hỗ trợ/Kháng cự (Ví dụ: 'Chờ giá hồi về vùng 62k để mua vào, cắt lỗ nếu thủng 60k'). Không nói lý thuyết.",
+              "fundamentalOutlook": "Tác động vĩ mô: Đánh giá 1 câu về tâm lý thị trường chung hoặc tin tức ảnh hưởng đến giá."
             }
             """;
 

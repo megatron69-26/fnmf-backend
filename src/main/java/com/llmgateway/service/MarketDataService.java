@@ -146,12 +146,18 @@ public class MarketDataService {
 
     private MarketPriceDto fetchOrFallbackPrice(String fromSymbol, String toSymbol, String symbolKey, String name, String category, BigDecimal defaultBasePrice) {
         try {
-            String url = String.format("%s?function=CURRENCY_EXCHANGE_RATE&from_currency=%s&to_currency=%s&apikey=%s",
-                    apiUrl, fromSymbol, toSymbol, apiKey);
+            String binanceSymbol = switch (symbolKey.toUpperCase()) {
+                case "ETHUSDT", "ETH" -> "ETHUSDT";
+                case "XAUUSD", "XAU", "PAXGUSDT", "PAXG" -> "PAXGUSDT";
+                default -> "BTCUSDT";
+            };
+
+            String url = String.format("https://api.binance.com/api/v3/ticker/24hr?symbol=%s", binanceSymbol);
 
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(url))
                     .timeout(Duration.ofSeconds(6))
+                    .header("User-Agent", "Mozilla/5.0")
                     .GET()
                     .build();
 
@@ -159,24 +165,22 @@ public class MarketDataService {
 
             if (response.statusCode() == 200) {
                 JsonNode root = objectMapper.readTree(response.body());
-                JsonNode rateNode = root.path("Realtime Currency Exchange Rate");
 
-                if (!rateNode.isMissingNode() && rateNode.has("5. Exchange Rate")) {
-                    BigDecimal rate = new BigDecimal(rateNode.path("5. Exchange Rate").asText()).setScale(2, RoundingMode.HALF_UP);
-                    BigDecimal bid = rateNode.has("8. Bid Price") ? new BigDecimal(rateNode.path("8. Bid Price").asText()).setScale(2, RoundingMode.HALF_UP) : rate;
-                    BigDecimal ask = rateNode.has("9. Ask Price") ? new BigDecimal(rateNode.path("9. Ask Price").asText()).setScale(2, RoundingMode.HALF_UP) : rate;
-                    String lastRefreshed = rateNode.path("6. Last Refreshed").asText(LocalDateTime.now().toString());
-
-                    BigDecimal change24h = new BigDecimal("1.25");
+                if (root.has("lastPrice")) {
+                    BigDecimal rate = new BigDecimal(root.path("lastPrice").asText()).setScale(2, RoundingMode.HALF_UP);
+                    BigDecimal bid = root.has("bidPrice") ? new BigDecimal(root.path("bidPrice").asText()).setScale(2, RoundingMode.HALF_UP) : rate;
+                    BigDecimal ask = root.has("askPrice") ? new BigDecimal(root.path("askPrice").asText()).setScale(2, RoundingMode.HALF_UP) : rate;
+                    BigDecimal change24h = root.has("priceChangePercent") ? new BigDecimal(root.path("priceChangePercent").asText()).setScale(2, RoundingMode.HALF_UP) : BigDecimal.ZERO;
+                    String lastRefreshed = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
 
                     MarketPriceDto dto = new MarketPriceDto(symbolKey, name, category, rate, change24h, bid, ask, lastRefreshed);
                     priceCache.put(symbolKey, dto);
-                    log.info("FETCHED PRICE SUCCESS | symbol={} | price={}", symbolKey, rate);
+                    log.info("FETCHED BINANCE PRICE SUCCESS | symbol={} | price={}", symbolKey, rate);
                     return dto;
                 }
             }
         } catch (Exception e) {
-            log.warn("Lỗi khi gọi Alpha Vantage cho symbol {}: {}. Sử dụng giá bộ nhớ đệm.", symbolKey, e.getMessage());
+            log.warn("Lỗi khi gọi Binance API cho symbol {}: {}. Sử dụng giá bộ nhớ đệm.", symbolKey, e.getMessage());
         }
 
         if (priceCache.containsKey(symbolKey)) {
@@ -191,13 +195,18 @@ public class MarketDataService {
     private List<CandleDto> fetchCandlesFromApi(String symbol, String interval) {
         List<CandleDto> list = new ArrayList<>();
         try {
-            String cleanSym = symbol.toUpperCase().replace("USDT", "").replace("USD", "");
-            String url = String.format("%s?function=DIGITAL_CURRENCY_DAILY&symbol=%s&market=USD&apikey=%s",
-                    apiUrl, cleanSym, apiKey);
+            String binanceSymbol = switch (symbol.toUpperCase()) {
+                case "ETHUSDT", "ETH" -> "ETHUSDT";
+                case "XAUUSD", "XAU", "PAXGUSDT", "PAXG" -> "PAXGUSDT";
+                default -> "BTCUSDT";
+            };
+
+            String url = String.format("https://api.binance.com/api/v3/klines?symbol=%s&interval=1d&limit=30", binanceSymbol);
 
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(url))
-                    .timeout(Duration.ofSeconds(8))
+                    .timeout(Duration.ofSeconds(6))
+                    .header("User-Agent", "Mozilla/5.0")
                     .GET()
                     .build();
 
@@ -205,29 +214,26 @@ public class MarketDataService {
 
             if (response.statusCode() == 200) {
                 JsonNode root = objectMapper.readTree(response.body());
-                JsonNode timeSeries = root.path("Time Series (Digital Currency Daily)");
+                if (root.isArray()) {
+                    DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+                    for (JsonNode kline : root) {
+                        long openTimeMs = kline.get(0).asLong();
+                        LocalDateTime dateTime = LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(openTimeMs), java.time.ZoneId.systemDefault());
+                        String timeStr = dateTime.format(formatter);
 
-                if (!timeSeries.isMissingNode() && timeSeries.isObject()) {
-                    Iterator<Map.Entry<String, JsonNode>> fields = timeSeries.fields();
-                    int count = 0;
-                    while (fields.hasNext() && count < 30) {
-                        Map.Entry<String, JsonNode> entry = fields.next();
-                        String time = entry.getKey();
-                        JsonNode data = entry.getValue();
+                        BigDecimal open = new BigDecimal(kline.get(1).asText()).setScale(2, RoundingMode.HALF_UP);
+                        BigDecimal high = new BigDecimal(kline.get(2).asText()).setScale(2, RoundingMode.HALF_UP);
+                        BigDecimal low = new BigDecimal(kline.get(3).asText()).setScale(2, RoundingMode.HALF_UP);
+                        BigDecimal close = new BigDecimal(kline.get(4).asText()).setScale(2, RoundingMode.HALF_UP);
+                        BigDecimal volume = new BigDecimal(kline.get(5).asText()).setScale(2, RoundingMode.HALF_UP);
 
-                        BigDecimal open = parseValue(data, "1. open", "1a. open (USD)");
-                        BigDecimal high = parseValue(data, "2. high", "2a. high (USD)");
-                        BigDecimal low = parseValue(data, "3. low", "3a. low (USD)");
-                        BigDecimal close = parseValue(data, "4. close", "4a. close (USD)");
-                        BigDecimal volume = parseValue(data, "5. volume", "5. volume");
-
-                        list.add(0, new CandleDto(time, open, high, low, close, volume));
-                        count++;
+                        list.add(new CandleDto(timeStr, open, high, low, close, volume));
                     }
+                    log.info("FETCHED BINANCE CANDLES SUCCESS | symbol={} | count={}", binanceSymbol, list.size());
                 }
             }
         } catch (Exception e) {
-            log.warn("Không thể lấy nến từ API cho {}: {}", symbol, e.getMessage());
+            log.warn("Không thể lấy nến từ Binance API cho {}: {}", symbol, e.getMessage());
         }
         return list;
     }

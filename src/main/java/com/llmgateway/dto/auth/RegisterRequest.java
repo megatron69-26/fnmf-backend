@@ -1,37 +1,45 @@
 package com.llmgateway.dto.auth;
 
-import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
 public class RegisterRequest {
 
-    @NotBlank(message = "Email không được để trống")
-    @Email(message = "Email không đúng định dạng")
+    private String username;
     private String email;
 
     @NotBlank(message = "Mật khẩu không được để trống")
-    @Size(min = 6, message = "Mật khẩu phải có ít nhất 6 ký tự")
+    @Size(min = 4, message = "Mật khẩu phải có ít nhất 4 ký tự")
     private String password;
 
-    @NotBlank(message = "Họ và tên không được để trống")
     private String fullName;
 
     public RegisterRequest() {
     }
 
-    public RegisterRequest(String email, String password, String fullName) {
-        this.email = email;
+    public RegisterRequest(String username, String password) {
+        this.username = username;
+        this.email = username;
         this.password = password;
-        this.fullName = fullName;
+        this.fullName = username;
+    }
+
+    public String getUsername() {
+        return username != null && !username.isBlank() ? username : email;
+    }
+
+    public void setUsername(String username) {
+        this.username = username;
+        if (this.email == null) this.email = username;
     }
 
     public String getEmail() {
-        return email;
+        return email != null && !email.isBlank() ? email : username;
     }
 
     public void setEmail(String email) {
         this.email = email;
+        if (this.username == null) this.username = email;
     }
 
     public String getPassword() {
@@ -43,7 +51,7 @@ public class RegisterRequest {
     }
 
     public String getFullName() {
-        return fullName;
+        return fullName != null && !fullName.isBlank() ? fullName : getUsername();
     }
 
     public void setFullName(String fullName) {

@@ -58,6 +58,15 @@ public class RateLimitFilter implements Filter {
         HttpServletRequest request = (HttpServletRequest) servletRequest;
         HttpServletResponse response = (HttpServletResponse) servletResponse;
 
+        String path = request.getRequestURI();
+        // Bỏ qua rate limit cho các API giao dịch, thị trường, admin và trang web
+        if (path.startsWith("/api/trade") || path.startsWith("/api/admin") || path.startsWith("/api/market") 
+                || path.startsWith("/h2-console") || path.startsWith("/swagger-ui") || path.startsWith("/v3/api-docs")
+                || path.endsWith(".html") || path.endsWith(".js") || path.endsWith(".css")) {
+            chain.doFilter(request, response);
+            return;
+        }
+
         String clientIp = getClientIp(request);
         long now = System.currentTimeMillis();
 
