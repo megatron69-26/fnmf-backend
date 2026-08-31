@@ -3,7 +3,7 @@
 *Backend REST API, Oracle Database & AI Processing Layer*
 
 - **Người thực hiện:** Đặng Đức Khôi (Backend / Data Developer)
-- **Công nghệ cốt lõi:** Java 17, Spring Boot 3.3.5, Spring Data JPA, Oracle Database 21c, Spring Security (BCrypt), JJWT, Alpha Vantage API, Gemini AI, OpenAPI 3.0 / Swagger UI.
+- **Công nghệ cốt lõi:** Java 17, Spring Boot 3.3.5, Spring Data JPA, Oracle Database 21c (Dev) / H2 Database (Demo), Spring Security (BCrypt), JJWT, Alpha Vantage API, Gemini AI, OpenAPI 3.0 / Swagger UI.
 - **Base URL:** `http://localhost:8082`
 - **Swagger UI (Tài liệu API tương tác):** `http://localhost:8082/swagger-ui/index.html`
 
@@ -39,7 +39,7 @@
 
 ## 🗄️ 2. Cấu trúc Cơ sở dữ liệu (Oracle Database 21c)
 
-Hệ thống CSDL chạy trên **Oracle Database 21c** (`localhost:1521/orcl`, User `khoi2`) bao gồm 7 bảng:
+Hệ thống CSDL được thiết kế chuẩn cho **Oracle Database 21c** (tương thích cấu trúc 7 bảng). Tuy nhiên, đối với bản build phục vụ chấm điểm và chạy liên tục 24/7 trên máy tính cá nhân/máy chủ nhỏ, hệ thống đang được cấu hình chạy trên **H2 Database (MODE=Oracle)** để tối ưu tài nguyên mà vẫn giữ nguyên tính toàn vẹn dữ liệu (ACID).
 1. `USERS`: Lưu trữ tài khoản và mật khẩu đã băm (`password_hash`).
 2. `WALLETS`: Lưu trữ ví vốn ảo, số dư khả dụng và vốn khởi tạo ($10,000.00).
 3. `HOLDINGS`: Danh mục tài sản ảo đang nắm giữ (Vàng XAUUSD, Dầu USOIL, Bitcoin BTCUSDT...).
