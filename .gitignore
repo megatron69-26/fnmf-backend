@@ -18,3 +18,8 @@ Thumbs.db
 
 # Maven wrapper (if used)
 !.mvn/wrapper/maven-wrapper.jar
+
+# Database files
+data/
+*.db
+*.trace.db
