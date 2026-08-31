@@ -58,7 +58,7 @@ public class TradeService {
     //      newAvgPrice = (oldCost + newCost) / (oldQty + newQty).
     // ====================================================================================
     @Transactional
-    public OrderResponse executeOrder(Long userId, OrderRequest request) {
+    public OrderResponse executeOrder(Long userId, OrderRequest request, MarketPriceDto priceDto) {
         Wallet wallet = walletRepository.findByUserId(userId)
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy ví của người dùng có ID: " + userId));
 
@@ -66,23 +66,15 @@ public class TradeService {
         String orderType = request.getType().trim().toUpperCase();
         BigDecimal quantity = request.getQuantity();
 
-        // 1. Lấy giá thị trường thời gian thực cho mã tài sản từ Alpha Vantage
-        MarketPriceDto priceDto = marketDataService.getPriceBySymbol(cleanSymbol);
+        // [KIẾN TRÚC] Giá đã được lấy ở Controller (Ngoài Transaction) để tránh tình trạng Connection Pool Exhaustion.
         BigDecimal currentPrice = priceDto.getPrice();
         BigDecimal totalAmount = currentPrice.multiply(quantity).setScale(4, RoundingMode.HALF_UP);
 
         Transaction transaction;
 
         if ("BUY".equals(orderType)) {
-            // Kiểm tra số dư ví (Chống âm tiền)
-            if (wallet.getBalanceUsd().compareTo(totalAmount) < 0) {
-                throw new IllegalArgumentException(String.format(
-                        "Số dư ví ($%s) không đủ để mua %s %s trị giá $%s!",
-                        wallet.getBalanceUsd(), quantity, cleanSymbol, totalAmount));
-            }
-
-            // Trừ tiền trong ví
-            wallet.setBalanceUsd(wallet.getBalanceUsd().subtract(totalAmount));
+            // [OOP] Sử dụng hàm nghiệp vụ đóng gói của Entity thay vì set public
+            wallet.deductFunds(totalAmount);
             walletRepository.save(wallet);
 
             // Cập nhật danh mục tài sản sở hữu (HOLDINGS) theo công thức DCA
@@ -132,8 +124,8 @@ public class TradeService {
                         cleanSymbol, holding.getQuantity(), quantity));
             }
 
-            // Cộng tiền vào ví
-            wallet.setBalanceUsd(wallet.getBalanceUsd().add(totalAmount));
+            // [OOP] Sử dụng hàm nghiệp vụ đóng gói của Entity
+            wallet.addFunds(totalAmount);
             walletRepository.save(wallet);
 
             // Trừ số lượng tài sản (Nếu bán hết thì xóa khỏi danh mục Holdings)

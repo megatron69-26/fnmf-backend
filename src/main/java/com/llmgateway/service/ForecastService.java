@@ -106,8 +106,8 @@ public class ForecastService {
                         cached.getRecommendation(),
                         cached.getConfidenceScore() != null ? cached.getConfidenceScore().intValue() : 85,
                         parseList(cached.getAnalysisSummary()),
-                        "Phân tích kỹ thuật dựa trên chuỗi biến động nến 30 ngày gần nhất.",
-                        "Tâm lý thị trường tổng hợp từ các bản tin kinh tế vĩ mô.",
+                        cached.getTechnicalOutlook() != null ? cached.getTechnicalOutlook() : "Vui lòng đợi tính toán chiến lược (AI)...",
+                        cached.getFundamentalOutlook() != null ? cached.getFundamentalOutlook() : "Vui lòng đợi phân tích vĩ mô (AI)...",
                         true,
                         cached.getCreatedAt()
                 );
@@ -138,7 +138,9 @@ public class ForecastService {
                     response.getResistanceLevel(),
                     response.getRecommendation(),
                     BigDecimal.valueOf(response.getConfidenceScore()),
-                    objectMapper.writeValueAsString(response.getKeyDrivers())
+                    objectMapper.writeValueAsString(response.getKeyDrivers()),
+                    response.getTechnicalOutlook(),
+                    response.getFundamentalOutlook()
             );
             forecastRepository.save(entity);
             log.info("ĐÃ LƯU DỰ BÁO AI MỚI VÀO ORACLE DB | symbol={} | recommendation={}", cleanSymbol, entity.getRecommendation());

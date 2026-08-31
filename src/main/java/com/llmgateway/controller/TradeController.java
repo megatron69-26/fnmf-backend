@@ -5,6 +5,7 @@ import com.llmgateway.dto.trade.OrderResponse;
 import com.llmgateway.dto.trade.PortfolioSummaryDto;
 import com.llmgateway.entity.Transaction;
 import com.llmgateway.service.TradeService;
+import com.llmgateway.service.MarketDataService;
 import com.llmgateway.util.JwtUtil;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
@@ -26,10 +27,12 @@ public class TradeController {
     private static final Logger log = LoggerFactory.getLogger(TradeController.class);
 
     private final TradeService tradeService;
+    private final MarketDataService marketDataService;
     private final JwtUtil jwtUtil;
 
-    public TradeController(TradeService tradeService, JwtUtil jwtUtil) {
+    public TradeController(TradeService tradeService, MarketDataService marketDataService, JwtUtil jwtUtil) {
         this.tradeService = tradeService;
+        this.marketDataService = marketDataService;
         this.jwtUtil = jwtUtil;
     }
 
@@ -42,7 +45,11 @@ public class TradeController {
             @RequestHeader(value = "Authorization", required = false) String authHeader,
             @Valid @RequestBody OrderRequest request) {
         Long userId = extractUserId(authHeader);
-        OrderResponse response = tradeService.executeOrder(userId, request);
+        
+        // [KIẾN TRÚC] Lấy giá (HTTP Request) bên ngoài Transaction để tránh Connection Pool Exhaustion.
+        var priceDto = marketDataService.getPriceBySymbol(request.getSymbol());
+        
+        OrderResponse response = tradeService.executeOrder(userId, request, priceDto);
         return ResponseEntity.ok(response);
     }
 

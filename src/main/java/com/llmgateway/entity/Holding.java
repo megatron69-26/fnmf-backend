@@ -35,6 +35,10 @@ public class Holding {
     @Column(name = "UPDATED_AT", nullable = false)
     private LocalDateTime updatedAt;
 
+    // [KIáº¾N TRÃšC] Optimistic Locking: Chá»‘ng Race Condition khi giao dá»‹ch Ä‘á»“ng thá» i
+    @jakarta.persistence.Version
+    private Long version;
+
     @PrePersist
     @PreUpdate
     protected void onUpdate() {

@@ -45,13 +45,19 @@ public class MarketForecast {
     @Column(name = "analysis_summary", length = 4000)
     private String analysisSummary; // JSON or text of key driving points
 
+    @Column(name = "technical_outlook", length = 2000)
+    private String technicalOutlook;
+
+    @Column(name = "fundamental_outlook", length = 2000)
+    private String fundamentalOutlook;
+
     @Column(name = "created_at")
     private LocalDateTime createdAt = LocalDateTime.now();
 
     public MarketForecast() {
     }
 
-    public MarketForecast(String symbol, BigDecimal currentPrice, String trendPrediction, String timeframe, BigDecimal supportLevel, BigDecimal resistanceLevel, String recommendation, BigDecimal confidenceScore, String analysisSummary) {
+    public MarketForecast(String symbol, BigDecimal currentPrice, String trendPrediction, String timeframe, BigDecimal supportLevel, BigDecimal resistanceLevel, String recommendation, BigDecimal confidenceScore, String analysisSummary, String technicalOutlook, String fundamentalOutlook) {
         this.symbol = symbol;
         this.currentPrice = currentPrice;
         this.trendPrediction = trendPrediction;
@@ -61,6 +67,8 @@ public class MarketForecast {
         this.recommendation = recommendation;
         this.confidenceScore = confidenceScore;
         this.analysisSummary = analysisSummary;
+        this.technicalOutlook = technicalOutlook;
+        this.fundamentalOutlook = fundamentalOutlook;
         this.createdAt = LocalDateTime.now();
     }
 
@@ -150,5 +158,21 @@ public class MarketForecast {
 
     public void setCreatedAt(LocalDateTime createdAt) {
         this.createdAt = createdAt;
+    }
+
+    public String getTechnicalOutlook() {
+        return technicalOutlook;
+    }
+
+    public void setTechnicalOutlook(String technicalOutlook) {
+        this.technicalOutlook = technicalOutlook;
+    }
+
+    public String getFundamentalOutlook() {
+        return fundamentalOutlook;
+    }
+
+    public void setFundamentalOutlook(String fundamentalOutlook) {
+        this.fundamentalOutlook = fundamentalOutlook;
     }
 }

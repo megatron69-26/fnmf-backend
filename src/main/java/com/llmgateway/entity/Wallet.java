@@ -36,6 +36,10 @@ public class Wallet {
     @Column(name = "UPDATED_AT", nullable = false)
     private LocalDateTime updatedAt = LocalDateTime.now();
 
+    // [KIáº¾N TRÃšC] Optimistic Locking: Chá»‘ng Race Condition khi giao dá»‹ch Ä‘á»“ng thá» i
+    @jakarta.persistence.Version
+    private Long version;
+
     // --- Constructors ---
     public Wallet() {
     }
@@ -77,8 +81,33 @@ public class Wallet {
         return balanceUsd;
     }
 
-    public void setBalanceUsd(BigDecimal balanceUsd) {
-        this.balanceUsd = balanceUsd;
+    // [OOP] Domain-Driven Design: Remove public setBalanceUsd
+    // Instead, use business methods to encapsulate logic and ensure safety.
+    public void deductFunds(BigDecimal amount) {
+        if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new IllegalArgumentException("Sá»‘ tiá» n trá»« pháº£i lá»›n hÆ¡n 0");
+        }
+        if (this.balanceUsd.compareTo(amount) < 0) {
+            throw new IllegalArgumentException("Sá»‘ dÆ° khÃ´ng Ä‘á»§ Ä‘á»ƒ thá»±c hiá»‡n giao dá»‹ch!");
+        }
+        this.balanceUsd = this.balanceUsd.subtract(amount);
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    public void addFunds(BigDecimal amount) {
+        if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new IllegalArgumentException("Sá»‘ tiá» n cá»™ng pháº£i lá»›n hÆ¡n 0");
+        }
+        this.balanceUsd = this.balanceUsd.add(amount);
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    // [OOP] Admin Override: Only to be used by AdminController for resetting accounts
+    public void forceSetBalance(BigDecimal balance) {
+        if (balance == null || balance.compareTo(BigDecimal.ZERO) < 0) {
+            throw new IllegalArgumentException("Sá»‘ dÆ° pháº£i >= 0");
+        }
+        this.balanceUsd = balance;
         this.updatedAt = LocalDateTime.now();
     }
 
