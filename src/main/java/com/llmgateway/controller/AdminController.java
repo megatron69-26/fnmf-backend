@@ -86,39 +86,51 @@ public class AdminController {
     @PostMapping("/topup")
     public ResponseEntity<Map<String, Object>> topUp(@RequestHeader(value = "Authorization", required = false) String authHeader,
                                                      @RequestBody Map<String, Object> body) {
-        if (!isAdmin(authHeader)) return forbiddenResponse();
-
-        String email = body.getOrDefault("email", "khoi.pro@fnmf.com").toString().trim().toLowerCase();
-        BigDecimal amount = new BigDecimal(body.getOrDefault("amount", 50000.0).toString());
-
-        Map<String, Object> res = adminService.topUp(email, amount);
-        return ResponseEntity.ok(res);
+        try {
+            if (!isAdmin(authHeader)) return forbiddenResponse();
+    
+            String email = body.getOrDefault("email", "khoi.pro@fnmf.com").toString().trim().toLowerCase();
+            BigDecimal amount = new BigDecimal(body.getOrDefault("amount", 50000.0).toString());
+    
+            Map<String, Object> res = adminService.topUp(email, amount);
+            return ResponseEntity.ok(res);
+        } catch (org.springframework.orm.ObjectOptimisticLockingFailureException e) {
+            return ResponseEntity.status(org.springframework.http.HttpStatus.CONFLICT).body(java.util.Map.of("status", "ERROR", "message", "Dữ liệu đã được cập nhật bởi thao tác khác, vui lòng thử lại."));
+        }
     }
 
     @PostMapping("/grant-crypto")
     public ResponseEntity<Map<String, Object>> grantCrypto(@RequestHeader(value = "Authorization", required = false) String authHeader,
                                                            @RequestBody Map<String, Object> body) {
-        if (!isAdmin(authHeader)) return forbiddenResponse();
-
-        String email = body.getOrDefault("email", "khoi.pro@fnmf.com").toString().trim().toLowerCase();
-        String symbol = body.getOrDefault("symbol", "BTCUSDT").toString().trim().toUpperCase();
-        BigDecimal quantity = new BigDecimal(body.getOrDefault("quantity", 1.0).toString());
-        BigDecimal avgPrice = new BigDecimal(body.getOrDefault("avgBuyPrice", 68000.0).toString());
-
-        Map<String, Object> res = adminService.grantCrypto(email, symbol, quantity, avgPrice);
-        return ResponseEntity.ok(res);
+        try {
+            if (!isAdmin(authHeader)) return forbiddenResponse();
+    
+            String email = body.getOrDefault("email", "khoi.pro@fnmf.com").toString().trim().toLowerCase();
+            String symbol = body.getOrDefault("symbol", "BTCUSDT").toString().trim().toUpperCase();
+            BigDecimal quantity = new BigDecimal(body.getOrDefault("quantity", 1.0).toString());
+            BigDecimal avgPrice = new BigDecimal(body.getOrDefault("avgBuyPrice", 68000.0).toString());
+    
+            Map<String, Object> res = adminService.grantCrypto(email, symbol, quantity, avgPrice);
+            return ResponseEntity.ok(res);
+        } catch (org.springframework.orm.ObjectOptimisticLockingFailureException e) {
+            return ResponseEntity.status(org.springframework.http.HttpStatus.CONFLICT).body(java.util.Map.of("status", "ERROR", "message", "Dữ liệu đã được cập nhật bởi thao tác khác, vui lòng thử lại."));
+        }
     }
 
     @PostMapping("/set-balance")
     public ResponseEntity<Map<String, Object>> setBalance(@RequestHeader(value = "Authorization", required = false) String authHeader,
                                                           @RequestBody Map<String, Object> body) {
-        if (!isAdmin(authHeader)) return forbiddenResponse();
-
-        String email = body.getOrDefault("email", "khoi.pro@fnmf.com").toString().trim().toLowerCase();
-        BigDecimal balance = new BigDecimal(body.getOrDefault("balance", 100000.0).toString());
-
-        Map<String, Object> res = adminService.setBalance(email, balance);
-        return ResponseEntity.ok(res);
+        try {
+            if (!isAdmin(authHeader)) return forbiddenResponse();
+    
+            String email = body.getOrDefault("email", "khoi.pro@fnmf.com").toString().trim().toLowerCase();
+            BigDecimal balance = new BigDecimal(body.getOrDefault("balance", 100000.0).toString());
+    
+            Map<String, Object> res = adminService.setBalance(email, balance);
+            return ResponseEntity.ok(res);
+        } catch (org.springframework.orm.ObjectOptimisticLockingFailureException e) {
+            return ResponseEntity.status(org.springframework.http.HttpStatus.CONFLICT).body(java.util.Map.of("status", "ERROR", "message", "Dữ liệu đã được cập nhật bởi thao tác khác, vui lòng thử lại."));
+        }
     }
 
     @PostMapping("/reset")

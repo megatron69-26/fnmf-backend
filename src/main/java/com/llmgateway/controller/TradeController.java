@@ -41,16 +41,22 @@ public class TradeController {
      * Đặt lệnh MUA (BUY) hoặc BÁN (SELL) giả lập (Paper Trading).
      */
     @PostMapping("/order")
-    public ResponseEntity<OrderResponse> executeOrder(
+    public ResponseEntity<?> executeOrder(
             @RequestHeader(value = "Authorization", required = false) String authHeader,
             @Valid @RequestBody OrderRequest request) {
-        Long userId = extractUserId(authHeader);
-        
-        // [KIẾN TRÚC] Lấy giá (HTTP Request) bên ngoài Transaction để tránh Connection Pool Exhaustion.
-        var priceDto = marketDataService.getPriceBySymbol(request.getSymbol());
-        
-        OrderResponse response = tradeService.executeOrder(userId, request, priceDto);
-        return ResponseEntity.ok(response);
+        try {
+            Long userId = extractUserId(authHeader);
+            var priceDto = marketDataService.getPriceBySymbol(request.getSymbol());
+            OrderResponse response = tradeService.executeOrder(userId, request, priceDto);
+            return ResponseEntity.ok(response);
+        } catch (org.springframework.orm.ObjectOptimisticLockingFailureException e) {
+            log.warn("Optimistic lock failed during order execution: {}", e.getMessage());
+            return ResponseEntity.status(org.springframework.http.HttpStatus.CONFLICT)
+                    .body(java.util.Map.of(
+                            "status", "ERROR",
+                            "message", "Dữ liệu đã được cập nhật bởi thao tác khác, vui lòng thử lại."
+                    ));
+        }
     }
 
     /**
