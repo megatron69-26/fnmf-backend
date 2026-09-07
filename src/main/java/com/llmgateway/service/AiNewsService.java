@@ -76,6 +76,34 @@ public class AiNewsService {
         int maxItems = limit > 0 ? limit : 5;
         List<NewsFeedItemDto> rawNewsList = fetchRealNewsFromAlphaVantage(symbol, maxItems);
         List<NewsFeedItemDto> enrichedList = new ArrayList<>();
+        if (rawNewsList.isEmpty()) {
+            log.info("Alpha Vantage chưa trả bài mới (hoặc chạm rate limit), tự động tải tin bài từ Cache CSDL Oracle...");
+            List<NewsAiCache> cachedList = (symbol != null && !symbol.isBlank())
+                    ? newsAiCacheRepository.findBySymbolOrderByPublishedAtDesc(symbol.toUpperCase())
+                    : newsAiCacheRepository.findTop10ByOrderByPublishedAtDesc();
+            if (cachedList.isEmpty()) {
+                cachedList = newsAiCacheRepository.findTop10ByOrderByPublishedAtDesc();
+            }
+            for (NewsAiCache c : cachedList) {
+                NewsFeedItemDto dto = new NewsFeedItemDto();
+                dto.setTitle(c.getTitle());
+                dto.setUrl(c.getArticleUrl());
+                dto.setTimePublished(c.getPublishedAt() != null ? c.getPublishedAt().toString() : "");
+                dto.setSummary(c.getTitle());
+                dto.setSource("Financial News");
+                dto.setCategory("Market");
+                dto.setAiSummary(parseSummaryPoints(c.getSummaryPoints()));
+                dto.setAiSentiment(c.getSentiment());
+                dto.setAiConfidence(c.getConfidencePct() != null ? c.getConfidencePct().intValue() : 85);
+                dto.setAiReason(c.getReason());
+                dto.setFromCache(true);
+                enrichedList.add(dto);
+                if (enrichedList.size() >= maxItems) break;
+            }
+            if (!enrichedList.isEmpty()) {
+                return enrichedList;
+            }
+        }
 
         for (NewsFeedItemDto item : rawNewsList) {
             String url = item.getUrl();
@@ -114,6 +142,9 @@ public class AiNewsService {
             }
 
             enrichedList.add(item);
+            if (enrichedList.size() >= maxItems) {
+                break;
+            }
         }
 
         return enrichedList;
@@ -204,6 +235,12 @@ public class AiNewsService {
 
             if (response.statusCode() == 200) {
                 JsonNode root = objectMapper.readTree(response.body());
+                if (root.has("Note") || root.has("Information")) {
+                    String msg = root.has("Note") ? root.path("Note").asText() : root.path("Information").asText();
+                    log.warn("Alpha Vantage API Rate Limit / Thông báo hệ thống: {}", msg);
+                } else if (root.has("Error Message")) {
+                    log.error("Alpha Vantage API Error Message: {}", root.path("Error Message").asText());
+                }
                 JsonNode feed = root.path("feed");
 
                 if (feed.isArray()) {
@@ -221,7 +258,15 @@ public class AiNewsService {
                             topics.add(t.path("topic").asText());
                         }
 
-                        list.add(new NewsFeedItemDto(title, articleUrl, timePublished, summary, bannerImage, source, category, topics, null, null, null, null, false));
+                        NewsFeedItemDto dto = new NewsFeedItemDto(title, articleUrl, timePublished, summary, bannerImage, source, category, topics, null, null, null, null, false);
+                        JsonNode authors = node.path("authors");
+                        if (authors.isArray() && authors.size() > 0) {
+                            dto.setAuthor(authors.get(0).asText());
+                        }
+                        list.add(dto);
+                        if (list.size() >= limit) {
+                            break;
+                        }
                     }
                 }
             }

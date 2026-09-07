@@ -49,12 +49,12 @@ public class AdminService {
         wallet.setUpdatedAt(LocalDateTime.now());
         walletRepository.save(wallet);
 
-        // [KIáº¾N TRÃšC] Lưu log giao dịch ACID
+        // [KIẾN TRÚC] Lưu log giao dịch ACID
         com.llmgateway.entity.Transaction tx = new com.llmgateway.entity.Transaction(
             wallet.getId(), "USD", "TOPUP", BigDecimal.ONE, amount, amount);
         transactionRepository.save(tx);
 
-        log.info(">>> [ADMIN] Ä Ã£ NÄ P ${} vÃ o tÃ i khoáº£n '{}'", amount, email);
+        log.info(">>> [ADMIN] Đã NẠP ${} vào tài khoản '{}'", amount, email);
 
         Map<String, Object> res = new HashMap<>();
         res.put("status", "SUCCESS");
@@ -83,12 +83,12 @@ public class AdminService {
         }
         holdingRepository.save(holding);
 
-        // [KIáº¾N TRÃšC] Lưu log giao dịch ACID
+        // [KIẾN TRÚC] Lưu log giao dịch ACID
         com.llmgateway.entity.Transaction tx = new com.llmgateway.entity.Transaction(
             wallet.getId(), symbol, "GRANT", avgPrice, quantity, quantity.multiply(avgPrice));
         transactionRepository.save(tx);
 
-        log.info(">>> [ADMIN] Ä Ã£ cáº¥p {} {} (giÃ¡ vá»‘n ${}) cho user '{}'", quantity, symbol, avgPrice, email);
+        log.info(">>> [ADMIN] Đã cấp {} {} (giá vốn ${}) cho user '{}'", quantity, symbol, avgPrice, email);
 
         wallet.setUpdatedAt(LocalDateTime.now());
         walletRepository.save(wallet);

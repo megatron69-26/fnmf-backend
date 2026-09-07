@@ -13,6 +13,7 @@ public class NewsFeedItemDto {
     private String summary;          // Tóm tắt gốc từ báo chí
     private String bannerImage;      // Ảnh bìa bài báo
     private String source;           // Nguồn báo (Investing.com, TradingView, Reuters...)
+    private String author;           // Tác giả bài báo
     private String category;
     private List<String> topics;
 
@@ -157,5 +158,13 @@ public class NewsFeedItemDto {
 
     public void setFromCache(boolean fromCache) {
         this.fromCache = fromCache;
+    }
+
+    public String getAuthor() {
+        return author;
+    }
+
+    public void setAuthor(String author) {
+        this.author = author;
     }
 }
