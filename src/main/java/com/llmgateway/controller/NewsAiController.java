@@ -1,4 +1,4 @@
-package com.llmgateway.controller;
+﻿package com.llmgateway.controller;
 
 import com.llmgateway.dto.news.NewsAnalysisRequest;
 import com.llmgateway.dto.news.NewsAnalysisResponse;
@@ -28,8 +28,8 @@ public class NewsAiController {
 
     /**
      * GET /api/news/feed?symbol=BTCUSDT&limit=5
-     * PIPELINE TỰ ĐỘNG 100%:
-     * Lấy bài báo THẬT từ Alpha Vantage API -> Đưa qua Gemini AI phân tích -> Lưu Cache CSDL Oracle -> Trả về cho Android.
+     * PIPELINE Tá»° Äá»˜NG 100%:
+     * Láº¥y bÃ i bÃ¡o THáº¬T tá»« Alpha Vantage API -> ÄÆ°a qua Gemini AI phÃ¢n tÃ­ch -> LÆ°u Cache CSDL Oracle -> Tráº£ vá» cho Android.
      */
     @GetMapping("/feed")
     public ResponseEntity<List<NewsFeedItemDto>> getLiveAiNewsFeed(
@@ -41,7 +41,7 @@ public class NewsAiController {
 
     /**
      * POST /api/news/analyze
-     * Nhận bài báo -> Kiểm tra CSDL Oracle (hoặc gọi Gemini AI) -> Trả về JSON tóm tắt & gán nhãn Bullish/Bearish
+     * Nháº­n bÃ i bÃ¡o -> Kiá»ƒm tra CSDL Oracle (hoáº·c gá»i Gemini AI) -> Tráº£ vá» JSON tÃ³m táº¯t & gÃ¡n nhÃ£n Bullish/Bearish
      */
     @PostMapping("/analyze")
     public ResponseEntity<NewsAnalysisResponse> analyzeNews(@Valid @RequestBody NewsAnalysisRequest request) {
@@ -51,7 +51,7 @@ public class NewsAiController {
 
     /**
      * GET /api/news/cache
-     * Lấy danh sách toàn bộ các bài báo đã được AI phân tích và lưu trong CSDL Oracle (NEWS_AI_CACHE)
+     * Láº¥y danh sÃ¡ch toÃ n bá»™ cÃ¡c bÃ i bÃ¡o Ä‘Ã£ Ä‘Æ°á»£c AI phÃ¢n tÃ­ch vÃ  lÆ°u trong CSDL Oracle (NEWS_AI_CACHE)
      */
     @GetMapping("/cache")
     public ResponseEntity<List<NewsAiCache>> getCachedNews() {
@@ -59,3 +59,4 @@ public class NewsAiController {
         return ResponseEntity.ok(cachedNews);
     }
 }
+
