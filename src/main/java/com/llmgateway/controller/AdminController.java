@@ -35,12 +35,16 @@ public class AdminController {
     private final JdbcTemplate jdbcTemplate;
     private final JwtUtil jwtUtil;
     private final com.llmgateway.repository.UserRepository userRepository;
+    private final com.llmgateway.service.AiNewsService aiNewsService;
 
-    public AdminController(AdminService adminService, JdbcTemplate jdbcTemplate, JwtUtil jwtUtil, com.llmgateway.repository.UserRepository userRepository) {
+    public AdminController(AdminService adminService, JdbcTemplate jdbcTemplate, JwtUtil jwtUtil,
+                           com.llmgateway.repository.UserRepository userRepository,
+                           com.llmgateway.service.AiNewsService aiNewsService) {
         this.adminService = adminService;
         this.jdbcTemplate = jdbcTemplate;
         this.jwtUtil = jwtUtil;
         this.userRepository = userRepository;
+        this.aiNewsService = aiNewsService;
     }
 
     /**
@@ -219,5 +223,14 @@ public class AdminController {
         res.put("databaseEngine", "H2 Oracle-Mode Persistent DB");
         res.put("uptime", "Running 24/7 Active");
         return ResponseEntity.ok(res);
+    }
+
+    @GetMapping("/news/diagnostics")
+    public ResponseEntity<Map<String, Object>> getNewsDiagnostics(@RequestHeader(value = "Authorization", required = false) String authHeader) {
+        if (!isAdmin(authHeader)) return forbiddenResponse();
+
+        Map<String, Object> diag = aiNewsService.getDiagnostics();
+        diag.put("activeProfiles", env.getActiveProfiles());
+        return ResponseEntity.ok(diag);
     }
 }

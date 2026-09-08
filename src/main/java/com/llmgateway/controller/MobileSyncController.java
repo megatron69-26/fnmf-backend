@@ -88,12 +88,20 @@ public class MobileSyncController {
         // Nếu cache trống, gọi pipeline live feed để nạp dữ liệu mới
         if (result.isEmpty()) {
             List<NewsFeedItemDto> liveFeed = aiNewsService.getLiveAiNewsFeed(symbol, limit);
-            // Sau khi gọi live feed, dữ liệu đã được lưu vào Oracle DB Cache
+            // Sau khi gọi live feed, dữ liệu đã được lưu vào CSDL Cache
             // Đọc lại cache
             cachedNews = aiNewsService.getAllCachedNews();
             result = cachedNews.stream()
                     .filter(item -> symbol == null || symbol.isEmpty() ||
                             (item.getSymbol() != null && item.getSymbol().equalsIgnoreCase(symbol)))
+                    .limit(limit)
+                    .map(this::mapToMobileBundle)
+                    .collect(Collectors.toList());
+        }
+
+        // Nếu vẫn trống (do tin bài mang nhãn chung MARKET), lấy tin thị trường chung
+        if (result.isEmpty() && !cachedNews.isEmpty()) {
+            result = cachedNews.stream()
                     .limit(limit)
                     .map(this::mapToMobileBundle)
                     .collect(Collectors.toList());

@@ -5,7 +5,6 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
-import jakarta.persistence.Lob;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 
@@ -29,8 +28,7 @@ public class NewsAiCache {
     @Column(name = "SYMBOL", length = 20)
     private String symbol;
 
-    @Lob
-    @Column(name = "SUMMARY_POINTS")
+    @Column(name = "SUMMARY_POINTS", columnDefinition = "TEXT")
     private String summaryPoints; // JSON string chứa mảng các gạch đầu dòng
 
     @Column(name = "SENTIMENT", length = 20)
@@ -39,8 +37,7 @@ public class NewsAiCache {
     @Column(name = "CONFIDENCE_PCT", precision = 5, scale = 2)
     private BigDecimal confidencePct;
 
-    @Lob
-    @Column(name = "REASON")
+    @Column(name = "REASON", columnDefinition = "TEXT")
     private String reason;
 
     @Column(name = "PUBLISHED_AT")

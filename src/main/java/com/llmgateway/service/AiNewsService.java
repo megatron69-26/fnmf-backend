@@ -12,6 +12,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.net.URI;
@@ -71,18 +72,21 @@ public class AiNewsService {
     //      hoàn toàn KHÔNG tốn chi phí gọi Gemini AI.
     //   3. NẾU LÀ BÀI MỚI: Gọi Gemini AI phân tích 1 lần duy nhất, sau đó tự động lưu vào
     //      Oracle DB để phục vụ cho hàng triệu lượt đọc tiếp theo của các User khác.
-    // ====================================================================================
+    @Transactional(readOnly = true)
     public List<NewsFeedItemDto> getLiveAiNewsFeed(String symbol, int limit) {
         int maxItems = limit > 0 ? limit : 5;
         List<NewsFeedItemDto> rawNewsList = fetchRealNewsFromAlphaVantage(symbol, maxItems);
         List<NewsFeedItemDto> enrichedList = new ArrayList<>();
         if (rawNewsList.isEmpty()) {
-            log.info("Alpha Vantage chưa trả bài mới (hoặc chạm rate limit), tự động tải tin bài từ Cache CSDL Oracle...");
+            log.info("Alpha Vantage chưa trả bài mới (hoặc chạm rate limit), tự động tải tin bài từ Cache CSDL...");
             List<NewsAiCache> cachedList = (symbol != null && !symbol.isBlank())
                     ? newsAiCacheRepository.findBySymbolOrderByPublishedAtDesc(symbol.toUpperCase())
                     : newsAiCacheRepository.findTop10ByOrderByPublishedAtDesc();
             if (cachedList.isEmpty()) {
                 cachedList = newsAiCacheRepository.findTop10ByOrderByPublishedAtDesc();
+            }
+            if (cachedList.isEmpty()) {
+                cachedList = newsAiCacheRepository.findAll();
             }
             for (NewsAiCache c : cachedList) {
                 NewsFeedItemDto dto = new NewsFeedItemDto();
@@ -153,6 +157,7 @@ public class AiNewsService {
     /**
      * Phân tích bài báo bất kỳ (dùng cho trường hợp truyền tay bài báo)
      */
+    @Transactional
     public NewsAnalysisResponse analyzeNews(NewsAnalysisRequest request) {
         String title = request.getTitle().trim();
         String url = request.getArticleUrl() != null ? request.getArticleUrl().trim() : null;
@@ -202,6 +207,7 @@ public class AiNewsService {
         return aiResult;
     }
 
+    @Transactional(readOnly = true)
     public List<NewsAiCache> getAllCachedNews() {
         return newsAiCacheRepository.findAll();
     }
@@ -212,7 +218,12 @@ public class AiNewsService {
 
     private List<NewsFeedItemDto> fetchRealNewsFromAlphaVantage(String symbol, int limit) {
         List<NewsFeedItemDto> list = new ArrayList<>();
+        if (alphaVantageKey == null || alphaVantageKey.isBlank() || alphaVantageKey.startsWith("${")) {
+            log.info("Alpha Vantage API Key chưa được cung cấp hoặc rỗng, tự động lấy tin bài từ CSDL Cache...");
+            return list;
+        }
         try {
+            String baseUrl = (alphaVantageUrl != null && !alphaVantageUrl.isBlank()) ? alphaVantageUrl : "https://www.alphavantage.co/query";
             String tickerParam = "";
             if (symbol != null && !symbol.isBlank()) {
                 String clean = symbol.toUpperCase();
@@ -223,7 +234,7 @@ public class AiNewsService {
             }
 
             String url = String.format("%s?function=NEWS_SENTIMENT%s&topics=financial_markets,technology&limit=%d&apikey=%s",
-                    alphaVantageUrl, tickerParam, limit > 0 ? limit : 5, alphaVantageKey);
+                    baseUrl, tickerParam, limit > 0 ? limit : 5, alphaVantageKey);
 
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(url))
@@ -430,6 +441,7 @@ public class AiNewsService {
         return new NewsAnalysisResponse(request.getTitle(), request.getSymbol(), summary, sentiment, confidence, reason, false);
     }
 
+    @Transactional
     private void saveToOracleCache(NewsFeedItemDto item, String symbol) {
         try {
             NewsAiCache entity = new NewsAiCache();
@@ -444,7 +456,7 @@ public class AiNewsService {
             entity.setAnalyzedAt(LocalDateTime.now());
 
             newsAiCacheRepository.save(entity);
-            log.info("LƯU BÀI BÁO THẬT TỪ ALPHA VANTAGE + PHÂN TÍCH AI VÀO ORACLE DB | title='{}' | sentiment={}", item.getTitle(), item.getAiSentiment());
+            log.info("LƯU BÀI BÁO THẬT TỪ ALPHA VANTAGE + PHÂN TÍCH AI VÀO CSDL | title='{}' | sentiment={}", item.getTitle(), item.getAiSentiment());
         } catch (Exception e) {
             log.warn("Không thể lưu cache: {}", e.getMessage());
         }
@@ -459,5 +471,67 @@ public class AiNewsService {
         } catch (Exception e) {
             return List.of(summaryPointsJson);
         }
+    }
+
+    /**
+     * Chẩn đoán trạng thái hệ thống tin tức & biến môi trường (Tuyệt đối không làm lộ giá trị khóa).
+     */
+    @Transactional(readOnly = true)
+    public Map<String, Object> getDiagnostics() {
+        Map<String, Object> diag = new java.util.LinkedHashMap<>();
+
+        // 1. Trạng thái Variables (Chỉ báo tồn tại/độ dài, không in key)
+        Map<String, Object> vars = new java.util.LinkedHashMap<>();
+        vars.put("ALPHAVANTAGE_API_KEY", Map.of(
+                "exists", alphaVantageKey != null,
+                "configured", alphaVantageKey != null && !alphaVantageKey.isBlank() && !alphaVantageKey.startsWith("${"),
+                "length", alphaVantageKey != null ? alphaVantageKey.length() : 0
+        ));
+        vars.put("OPENAI_API_KEY", Map.of(
+                "exists", geminiApiKey != null,
+                "configured", geminiApiKey != null && !geminiApiKey.isBlank() && !geminiApiKey.startsWith("${"),
+                "length", geminiApiKey != null ? geminiApiKey.length() : 0
+        ));
+        vars.put("OPENAI_API_URL", (geminiApiUrl != null && !geminiApiUrl.isBlank()) ? geminiApiUrl : "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions");
+        vars.put("OPENAI_DEFAULT_MODEL", (geminiModel != null && !geminiModel.isBlank() && !geminiModel.startsWith("${")) ? geminiModel : "gemini-2.0-flash");
+        diag.put("variables", vars);
+
+        // 2. Kiểm tra kết nối Alpha Vantage
+        Map<String, Object> avReport = new java.util.LinkedHashMap<>();
+        if (alphaVantageKey == null || alphaVantageKey.isBlank() || alphaVantageKey.startsWith("${")) {
+            avReport.put("status", "NOT_CONFIGURED");
+            avReport.put("message", "ALPHAVANTAGE_API_KEY is empty or default placeholder");
+        } else {
+            try {
+                String baseUrl = (alphaVantageUrl != null && !alphaVantageUrl.isBlank()) ? alphaVantageUrl : "https://www.alphavantage.co/query";
+                String pingUrl = String.format("%s?function=NEWS_SENTIMENT&topics=financial_markets&limit=5&apikey=%s",
+                        baseUrl, alphaVantageKey);
+                HttpRequest request = HttpRequest.newBuilder()
+                        .uri(URI.create(pingUrl))
+                        .timeout(Duration.ofSeconds(10))
+                        .GET()
+                        .build();
+                HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+                avReport.put("httpStatus", response.statusCode());
+                if (response.statusCode() == 200) {
+                    JsonNode root = objectMapper.readTree(response.body());
+                    if (root.has("Note")) avReport.put("note", root.path("Note").asText());
+                    if (root.has("Information")) avReport.put("information", root.path("Information").asText());
+                    if (root.has("Error Message")) avReport.put("errorMessage", root.path("Error Message").asText());
+                    JsonNode feed = root.path("feed");
+                    avReport.put("feedItemsCount", feed.isArray() ? feed.size() : 0);
+                    avReport.put("hasFeed", feed.isArray() && feed.size() > 0);
+                }
+            } catch (Exception e) {
+                avReport.put("error", e.getMessage());
+            }
+        }
+        diag.put("alphaVantage", avReport);
+
+        // 3. Kiểm tra CSDL Cache
+        long cacheCount = newsAiCacheRepository.count();
+        diag.put("databaseCacheCount", cacheCount);
+
+        return diag;
     }
 }
