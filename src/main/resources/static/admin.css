@@ -424,3 +424,28 @@ tr:hover {
     gap: 10px;
     margin-top: 16px;
 }
+
+.modal-info-group {
+    background: #1A1F2C;
+    border: 1px solid #2E3648;
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin-bottom: 14px;
+}
+
+.info-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 4px 0;
+    font-size: 13px;
+}
+
+.info-label {
+    color: #8A92A6;
+}
+
+.info-value {
+    color: #00F0FF;
+    font-family: monospace;
+}

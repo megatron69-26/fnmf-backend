@@ -58,78 +58,12 @@
             </div>
 
             <div class="tabs">
-                <button class="tab-btn active" data-tab="wallets" id="tabWallets">💰 Ví Tiền (WALLETS)</button>
-                <button class="tab-btn" data-tab="holdings" id="tabHoldings">🪙 Danh mục Coin (HOLDINGS)</button>
-                <button class="tab-btn" data-tab="users" id="tabUsers">👤 Người Dùng (USERS)</button>
-                <button class="tab-btn" data-tab="transactions" id="tabTransactions">📜 Lịch Sử Lệnh (TRANSACTIONS)</button>
+                <button class="tab-btn active" data-tab="users" id="tabUsers">👤 Người Dùng (USERS)</button>
+                <button class="tab-btn" data-tab="wallets" id="tabWallets">💰 Ví Tiền (WALLETS)</button>
             </div>
 
             <div class="table-responsive" id="tableContainer">
                 <div class="empty-state">Vui lòng đăng nhập quyền ADMIN để xem dữ liệu.</div>
-            </div>
-        </div>
-
-        <!-- Các Thao Tác Nghiệp Vụ Nhanh -->
-        <div class="grid" id="actionsGrid">
-            <!-- 1. Nạp Tiền Mặt USD -->
-            <div class="card">
-                <div class="card-title">💵 NẠP TIỀN VÍ (USD TOP-UP)</div>
-                <div class="input-group">
-                    <label for="topupTarget">Email người dùng</label>
-                    <input type="text" id="topupTarget" placeholder="Ví dụ: user@fnmf.com">
-                </div>
-                <div class="input-group">
-                    <label for="topupAmount">Số tiền nạp ($ USD)</label>
-                    <input type="number" id="topupAmount" placeholder="Số tiền" value="10000" min="1">
-                </div>
-                <div class="btn-row">
-                    <button class="btn btn-green btn-preset" data-target="topupAmount" data-value="10000">+$10,000</button>
-                    <button class="btn btn-green btn-preset" data-target="topupAmount" data-value="50000">+$50,000</button>
-                </div>
-                <button class="btn btn-blue" id="btnDoTopup">⚡ Thực Hiện Nạp Tiền</button>
-            </div>
-
-            <!-- 2. Cấp Coin Vào Ví -->
-            <div class="card">
-                <div class="card-title">🪙 CẤP TÀI SẢN (GRANT CRYPTO)</div>
-                <div class="input-group">
-                    <label for="cryptoTarget">Email người dùng</label>
-                    <input type="text" id="cryptoTarget" placeholder="Ví dụ: user@fnmf.com">
-                </div>
-                <div class="input-group">
-                    <label for="cryptoSymbol">Mã tài sản</label>
-                    <select id="cryptoSymbol">
-                        <option value="BTCUSDT">Bitcoin (BTCUSDT)</option>
-                        <option value="ETHUSDT">Ethereum (ETHUSDT)</option>
-                        <option value="SOLUSDT">Solana (SOLUSDT)</option>
-                        <option value="BNBUSDT">Binance Coin (BNBUSDT)</option>
-                    </select>
-                </div>
-                <div class="input-group">
-                    <label for="cryptoQty">Số lượng cấp</label>
-                    <input type="number" id="cryptoQty" value="1.0" step="0.1" min="0.0001">
-                </div>
-                <div class="input-group">
-                    <label for="cryptoPrice">Giá vốn ($ USD)</label>
-                    <input type="number" id="cryptoPrice" value="68000" min="0.01">
-                </div>
-                <button class="btn btn-gold" id="btnDoGrant">🚀 Cấp Tài Sản Vào Ví</button>
-            </div>
-
-            <!-- 3. Đặt Số Dư & Reset Ví -->
-            <div class="card">
-                <div class="card-title">⚙️ ĐẶT SỐ DƯ &amp; RESET TÀI KHOẢN</div>
-                <div class="input-group">
-                    <label for="manageTarget">Email người dùng</label>
-                    <input type="text" id="manageTarget" placeholder="Ví dụ: user@fnmf.com">
-                </div>
-                <div class="input-group">
-                    <label for="customBalance">Đặt số dư tùy ý ($ USD)</label>
-                    <input type="number" id="customBalance" value="100000" min="0">
-                </div>
-                <button class="btn btn-blue" id="btnDoSetBalance">💎 Đặt Số Dư Mới</button>
-                <div class="divider"></div>
-                <button class="btn btn-red" id="btnDoReset">🔄 Reset Về $10,000 USD &amp; Xóa Danh Mục</button>
             </div>
         </div>
 
@@ -147,6 +81,38 @@
                 <div class="modal-actions">
                     <button class="btn btn-secondary btn-sm" id="btnCancelEmailModal">Hủy bỏ</button>
                     <button class="btn btn-green btn-sm" id="btnConfirmEmailModal">Xác nhận cập nhật</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Modal Đặt Số Dư Trực Tiếp Cho Người Dùng -->
+        <div id="balanceUpdateModal" class="modal-overlay hidden">
+            <div class="modal-card">
+                <div class="modal-title">💎 ĐẶT SỐ DƯ TÀI KHOẢN (SET BALANCE)</div>
+                <div class="modal-desc">
+                    Cập nhật số dư trực tiếp cho ví tài khoản người dùng trên PostgreSQL Cloud.
+                </div>
+                <div class="modal-info-group">
+                    <div class="info-row">
+                        <span class="info-label">User ID:</span>
+                        <span id="modalBalanceUserId" class="info-value"></span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Email:</span>
+                        <strong id="modalBalanceEmail" class="info-value"></strong>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Số dư hiện tại:</span>
+                        <span id="modalBalanceCurrent" class="info-value"></span>
+                    </div>
+                </div>
+                <div class="input-group">
+                    <label for="modalNewBalanceInput">Số dư mới ($ USD):</label>
+                    <input type="number" id="modalNewBalanceInput" placeholder="Ví dụ: 50000" min="0" step="any" autocomplete="off">
+                </div>
+                <div class="modal-actions">
+                    <button class="btn btn-secondary btn-sm" id="btnCancelBalanceModal">Hủy bỏ</button>
+                    <button class="btn btn-blue btn-sm" id="btnConfirmBalanceModal">Xác nhận đặt số dư</button>
                 </div>
             </div>
         </div>

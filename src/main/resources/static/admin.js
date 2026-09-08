@@ -3,19 +3,21 @@
  * - In-memory token storage strictly (RAM only).
  * - Strict DOM createElement & textContent for XSS prevention.
  * - Strict CSP compliant (No inline handlers, no inline styles).
+ * - Manages USERS and WALLETS with direct balance setting and legacy email updating.
  */
 (function() {
     'use strict';
 
-    // In-memory token state
+    // In-memory token and state
     let authToken = null;
     let currentAdminEmail = null;
     let autoRefreshTimer = null;
     let isFetchingOverview = false;
     let isActionPending = false;
     let cachedDbData = null;
-    let currentTab = 'wallets';
+    let currentTab = 'users';
     let targetUserIdForEmailUpdate = null;
+    let targetUserForBalanceUpdate = null;
 
     // DOM Elements
     const authCard = document.getElementById('authCard');
@@ -33,29 +35,23 @@
     const tableContainer = document.getElementById('tableContainer');
     const consoleLogs = document.getElementById('consoleLogs');
 
-    const topupTarget = document.getElementById('topupTarget');
-    const topupAmount = document.getElementById('topupAmount');
-    const btnDoTopup = document.getElementById('btnDoTopup');
-
-    const cryptoTarget = document.getElementById('cryptoTarget');
-    const cryptoSymbol = document.getElementById('cryptoSymbol');
-    const cryptoQty = document.getElementById('cryptoQty');
-    const cryptoPrice = document.getElementById('cryptoPrice');
-    const btnDoGrant = document.getElementById('btnDoGrant');
-
-    const manageTarget = document.getElementById('manageTarget');
-    const customBalance = document.getElementById('customBalance');
-    const btnDoSetBalance = document.getElementById('btnDoSetBalance');
-    const btnDoReset = document.getElementById('btnDoReset');
-
+    // Email Modal Elements
     const emailUpdateModal = document.getElementById('emailUpdateModal');
     const modalOldIdentifier = document.getElementById('modalOldIdentifier');
     const modalNewEmailInput = document.getElementById('modalNewEmailInput');
     const btnCancelEmailModal = document.getElementById('btnCancelEmailModal');
     const btnConfirmEmailModal = document.getElementById('btnConfirmEmailModal');
 
+    // Balance Modal Elements
+    const balanceUpdateModal = document.getElementById('balanceUpdateModal');
+    const modalBalanceUserId = document.getElementById('modalBalanceUserId');
+    const modalBalanceEmail = document.getElementById('modalBalanceEmail');
+    const modalBalanceCurrent = document.getElementById('modalBalanceCurrent');
+    const modalNewBalanceInput = document.getElementById('modalNewBalanceInput');
+    const btnCancelBalanceModal = document.getElementById('btnCancelBalanceModal');
+    const btnConfirmBalanceModal = document.getElementById('btnConfirmBalanceModal');
+
     const tabButtons = document.querySelectorAll('.tab-btn');
-    const presetButtons = document.querySelectorAll('.btn-preset');
 
     const EMAIL_REGEX = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
 
@@ -227,6 +223,7 @@
         tableContainer.appendChild(emptyDiv);
     }
 
+    // Modal Email handlers
     function openEmailModal(userId, oldEmail) {
         targetUserIdForEmailUpdate = userId;
         modalOldIdentifier.textContent = oldEmail;
@@ -240,6 +237,89 @@
         emailUpdateModal.classList.add('hidden');
     }
 
+    // Modal Balance handlers
+    function openBalanceModal(userId, emailStr) {
+        targetUserForBalanceUpdate = { userId: userId, email: emailStr };
+        modalBalanceUserId.textContent = String(userId);
+        modalBalanceEmail.textContent = emailStr;
+
+        let currentBalanceStr = 'Chưa có ví';
+        if (cachedDbData && cachedDbData.wallets) {
+            const wallet = cachedDbData.wallets.find(w => {
+                const uid = (w.user_id !== undefined) ? w.user_id : w.USER_ID;
+                return String(uid) === String(userId);
+            });
+            if (wallet) {
+                const bal = (wallet.balance_usd !== undefined) ? wallet.balance_usd : wallet.BALANCE_USD;
+                if (bal !== undefined && bal !== null) {
+                    const numBal = Number(bal);
+                    currentBalanceStr = '$' + numBal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 }) + ' USD';
+                }
+            }
+        }
+
+        modalBalanceCurrent.textContent = currentBalanceStr;
+        modalNewBalanceInput.value = '';
+        balanceUpdateModal.classList.remove('hidden');
+        modalNewBalanceInput.focus();
+    }
+
+    function closeBalanceModal() {
+        targetUserForBalanceUpdate = null;
+        balanceUpdateModal.classList.add('hidden');
+    }
+
+    async function confirmBalanceUpdate() {
+        if (!targetUserForBalanceUpdate) return;
+        if (isActionPending) return;
+
+        const rawVal = modalNewBalanceInput.value.trim();
+        if (!rawVal) {
+            showBanner('Vui lòng nhập số dư mới!', 'error');
+            return;
+        }
+
+        const num = Number(rawVal);
+        if (isNaN(num) || !isFinite(num) || num < 0) {
+            showBanner('Số dư không hợp lệ! Vui lòng nhập số hữu hạn lớn hơn hoặc bằng 0.', 'error');
+            return;
+        }
+
+        const targetEmail = targetUserForBalanceUpdate.email;
+        isActionPending = true;
+        btnConfirmBalanceModal.disabled = true;
+        logMessage('Đang đặt số dư cho tài khoản ' + targetEmail + ' thành $' + num + ' USD...', 'info');
+
+        try {
+            const res = await apiFetch('/api/admin/set-balance', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    email: targetEmail,
+                    balance: num
+                })
+            });
+
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || data.status === 'ERROR') {
+                throw new Error(data.message || ('Đặt số dư thất bại (HTTP ' + res.status + ')'));
+            }
+
+            const successMsg = data.message || ('Đã đặt số dư tài khoản thành $' + num + ' USD!');
+            showBanner(successMsg, 'success');
+            logMessage('✅ ' + successMsg, 'info');
+            closeBalanceModal();
+            await loadDbOverview(true);
+        } catch (e) {
+            showBanner(e.message, 'error');
+            logMessage('❌ Lỗi đặt số dư: ' + e.message, 'err');
+        } finally {
+            isActionPending = false;
+            btnConfirmBalanceModal.disabled = false;
+        }
+    }
+
+    // Render table based on active tab
     function renderCurrentTable() {
         if (!cachedDbData) {
             renderEmptyState('Chưa có dữ liệu hoặc phiên đăng nhập đã hết hạn.');
@@ -323,7 +403,11 @@
                     btnEdit.addEventListener('click', () => openEmailModal(userId, emailStr));
                     tdAction.appendChild(btnEdit);
                 } else {
-                    tdAction.textContent = '-';
+                    const btnSetBal = document.createElement('button');
+                    btnSetBal.className = 'btn btn-blue btn-xs';
+                    btnSetBal.textContent = '💎 Đặt số dư';
+                    btnSetBal.addEventListener('click', () => openBalanceModal(userId, emailStr));
+                    tdAction.appendChild(btnSetBal);
                 }
                 tr.appendChild(tdAction);
 
@@ -335,36 +419,14 @@
             return;
         }
 
-        let columns = [];
-        if (currentTab === 'wallets') {
-            columns = [
-                { key: 'ID', label: 'ID' },
-                { key: 'USER_ID', label: 'User ID' },
-                { key: 'BALANCE_USD', label: 'Số Dư ($ USD)' },
-                { key: 'INITIAL_BALANCE', label: 'Số Dư Ban Đầu' },
-                { key: 'UPDATED_AT', label: 'Cập Nhật' }
-            ];
-        } else if (currentTab === 'holdings') {
-            columns = [
-                { key: 'ID', label: 'ID' },
-                { key: 'WALLET_ID', label: 'Ví ID' },
-                { key: 'SYMBOL', label: 'Mã Coin' },
-                { key: 'QUANTITY', label: 'Số Lượng' },
-                { key: 'AVG_BUY_PRICE', label: 'Giá Vốn ($)' },
-                { key: 'UPDATED_AT', label: 'Cập Nhật' }
-            ];
-        } else if (currentTab === 'transactions') {
-            columns = [
-                { key: 'ID', label: 'ID' },
-                { key: 'WALLET_ID', label: 'Ví ID' },
-                { key: 'SYMBOL', label: 'Mã Coin' },
-                { key: 'TYPE', label: 'Loại Lệnh' },
-                { key: 'PRICE', label: 'Giá ($)' },
-                { key: 'QUANTITY', label: 'Số Lượng' },
-                { key: 'TOTAL_AMOUNT', label: 'Tổng Giá Trị ($)' },
-                { key: 'CREATED_AT', label: 'Thời Gian' }
-            ];
-        }
+        // Bảng WALLETS
+        let columns = [
+            { key: 'ID', label: 'ID' },
+            { key: 'USER_ID', label: 'User ID' },
+            { key: 'BALANCE_USD', label: 'Số Dư ($ USD)' },
+            { key: 'INITIAL_BALANCE', label: 'Số Dư Ban Đầu' },
+            { key: 'UPDATED_AT', label: 'Cập Nhật' }
+        ];
 
         columns.forEach(col => {
             const th = document.createElement('th');
@@ -378,7 +440,6 @@
             const tr = document.createElement('tr');
             columns.forEach(col => {
                 const td = document.createElement('td');
-                // Hỗ trợ cả key chữ hoa và chữ thường từ JDBC PostgreSQL
                 const val = (row[col.key] !== undefined) ? row[col.key] :
                             (row[col.key.toLowerCase()] !== undefined ? row[col.key.toLowerCase()] : '');
                 td.textContent = (val !== null && val !== undefined) ? String(val) : '';
@@ -408,47 +469,6 @@
         if (autoRefreshTimer) {
             clearInterval(autoRefreshTimer);
             autoRefreshTimer = null;
-        }
-    }
-
-    // Operations
-    async function executeOperation(btn, actionName, confirmText, endpoint, payload) {
-        if (!authToken) {
-            showBanner('Vui lòng đăng nhập ADMIN trước khi thao tác!', 'error');
-            return;
-        }
-        if (isActionPending) return;
-
-        if (!window.confirm(confirmText)) return;
-
-        isActionPending = true;
-        btn.disabled = true;
-        logMessage('Bắt đầu thao tác: ' + actionName + '...', 'info');
-
-        try {
-            const res = await apiFetch(endpoint, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-
-            const data = await res.json().catch(() => ({}));
-            if (!res.ok || data.status === 'ERROR') {
-                throw new Error(data.message || ('Thao tác thất bại (HTTP ' + res.status + ')'));
-            }
-
-            const successMsg = data.message || (actionName + ' thành công!');
-            logMessage('✅ ' + successMsg, 'info');
-            showBanner(successMsg, 'success');
-
-            // Refresh overview data immediately after mutation
-            await loadDbOverview(true);
-        } catch (e) {
-            logMessage('❌ ' + e.message, 'err');
-            showBanner(e.message, 'error');
-        } finally {
-            isActionPending = false;
-            btn.disabled = false;
         }
     }
 
@@ -490,31 +510,20 @@
             });
         });
 
-        // Preset amount buttons
-        presetButtons.forEach(btn => {
-            btn.addEventListener('click', () => {
-                const targetId = btn.getAttribute('data-target');
-                const val = btn.getAttribute('data-value');
-                const targetInput = document.getElementById(targetId);
-                if (targetInput) targetInput.value = val;
-            });
-        });
-
-        // Modal event listeners
+        // Modal Email event listeners
         if (btnCancelEmailModal) {
             btnCancelEmailModal.addEventListener('click', closeEmailModal);
         }
         if (btnConfirmEmailModal) {
             btnConfirmEmailModal.addEventListener('click', async () => {
+                if (isActionPending) return;
                 const newEmail = modalNewEmailInput.value.trim().toLowerCase();
                 if (!newEmail || !EMAIL_REGEX.test(newEmail)) {
                     showBanner('Vui lòng nhập địa chỉ email hợp lệ (VD: user@example.com)!', 'error');
                     return;
                 }
-                if (!window.confirm('Xác nhận cập nhật email của tài khoản #' + targetUserIdForEmailUpdate + ' thành ' + newEmail + '?')) {
-                    return;
-                }
 
+                isActionPending = true;
                 btnConfirmEmailModal.disabled = true;
                 try {
                     const res = await apiFetch('/api/admin/users/' + targetUserIdForEmailUpdate + '/email', {
@@ -535,97 +544,24 @@
                     showBanner(e.message, 'error');
                     logMessage('❌ Lỗi cập nhật email: ' + e.message, 'err');
                 } finally {
+                    isActionPending = false;
                     btnConfirmEmailModal.disabled = false;
                 }
             });
         }
 
-        // USD Topup
-        btnDoTopup.addEventListener('click', () => {
-            const target = topupTarget.value.trim().toLowerCase();
-            const amount = topupAmount.value.trim();
-            if (!target) {
-                showBanner('Vui lòng nhập email người dùng cần nạp tiền!', 'error');
-                return;
-            }
-            if (!amount || parseFloat(amount) <= 0) {
-                showBanner('Vui lòng nhập số tiền nạp hợp lệ (> 0)!', 'error');
-                return;
-            }
-
-            executeOperation(
-                btnDoTopup,
-                'Nạp tiền USD',
-                'Xác nhận nạp $' + amount + ' USD vào tài khoản "' + target + '"?',
-                '/api/admin/topup',
-                { email: target, identifier: target, amount: parseFloat(amount) }
-            );
-        });
-
-        // Grant Crypto
-        btnDoGrant.addEventListener('click', () => {
-            const target = cryptoTarget.value.trim().toLowerCase();
-            const symbol = cryptoSymbol.value.trim();
-            const quantity = cryptoQty.value.trim();
-            const price = cryptoPrice.value.trim();
-
-            if (!target) {
-                showBanner('Vui lòng nhập email người dùng cần cấp tài sản!', 'error');
-                return;
-            }
-            if (!quantity || parseFloat(quantity) <= 0) {
-                showBanner('Số lượng tài sản không hợp lệ!', 'error');
-                return;
-            }
-
-            executeOperation(
-                btnDoGrant,
-                'Cấp Coin',
-                'Xác nhận cấp ' + quantity + ' ' + symbol + ' cho tài khoản "' + target + '"?',
-                '/api/admin/grant-crypto',
-                { email: target, identifier: target, symbol: symbol, quantity: parseFloat(quantity), avgBuyPrice: parseFloat(price) }
-            );
-        });
-
-        // Set Balance
-        btnDoSetBalance.addEventListener('click', () => {
-            const target = manageTarget.value.trim().toLowerCase();
-            const balance = customBalance.value.trim();
-
-            if (!target) {
-                showBanner('Vui lòng nhập email người dùng!', 'error');
-                return;
-            }
-            if (!balance || parseFloat(balance) < 0) {
-                showBanner('Số dư đặt mới không hợp lệ (>= 0)!', 'error');
-                return;
-            }
-
-            executeOperation(
-                btnDoSetBalance,
-                'Đặt số dư',
-                'Xác nhận đặt số dư của tài khoản "' + target + '" thành $' + balance + ' USD?',
-                '/api/admin/set-balance',
-                { email: target, identifier: target, balance: parseFloat(balance) }
-            );
-        });
-
-        // Reset Account
-        btnDoReset.addEventListener('click', () => {
-            const target = manageTarget.value.trim().toLowerCase();
-            if (!target) {
-                showBanner('Vui lòng nhập email người dùng cần reset!', 'error');
-                return;
-            }
-
-            executeOperation(
-                btnDoReset,
-                'Reset tài khoản',
-                'CẢNH BÁO: Bạn có chắc chắn muốn RESET toàn bộ danh mục và đặt lại số dư về $10,000 USD cho "' + target + '"?',
-                '/api/admin/reset',
-                { email: target, identifier: target }
-            );
-        });
+        // Modal Balance event listeners
+        if (btnCancelBalanceModal) {
+            btnCancelBalanceModal.addEventListener('click', closeBalanceModal);
+        }
+        if (btnConfirmBalanceModal) {
+            btnConfirmBalanceModal.addEventListener('click', confirmBalanceUpdate);
+        }
+        if (modalNewBalanceInput) {
+            modalNewBalanceInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') confirmBalanceUpdate();
+            });
+        }
     }
 
     // Initialize on DOM ready

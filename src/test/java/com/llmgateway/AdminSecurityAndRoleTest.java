@@ -35,6 +35,10 @@ import org.springframework.mock.web.MockFilterChain;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.io.File;
 import java.io.InputStream;
@@ -84,7 +88,7 @@ public class AdminSecurityAndRoleTest {
         passwordEncoder = mock(PasswordEncoder.class);
         objectMapper = new ObjectMapper();
 
-        adminService = new AdminService(userRepository, walletRepository, holdingRepository, transactionRepository);
+        adminService = new AdminService(userRepository, walletRepository);
         adminController = new AdminController(adminService, jdbcTemplate, jwtUtil, userRepository, aiNewsService);
 
         authService = new AuthService(userRepository, walletRepository, passwordEncoder, jwtUtil);
@@ -331,29 +335,163 @@ public class AdminSecurityAndRoleTest {
     }
 
     @Test
-    @DisplayName("12. Admin topup bằng email chính xác")
-    public void testAdminTopup_exactEmail_success() {
-        User user = new User("trader@fnmf.com", "hash", "Trader", UserRole.USER);
-        user.setId(8L);
-        when(userRepository.findAllByEmailIgnoreCase("trader@fnmf.com")).thenReturn(List.of(user));
+    @DisplayName("12a. ADMIN set balance bằng email chính xác: 200 & DB thay đổi đúng")
+    public void testAdminSetBalance_exactEmail_success() {
+        String token = "admin.valid.token";
+        when(jwtUtil.validateToken(token)).thenReturn(true);
+        when(jwtUtil.getEmailFromToken(token)).thenReturn("admin@fnmf.com");
+
+        User admin = new User("admin@fnmf.com", "hash", "Admin", UserRole.ADMIN);
+        when(userRepository.findByEmail("admin@fnmf.com")).thenReturn(Optional.of(admin));
+
+        User targetUser = new User("trader@fnmf.com", "hash", "Trader", UserRole.USER);
+        targetUser.setId(8L);
+        when(userRepository.findAllByEmailIgnoreCase("trader@fnmf.com")).thenReturn(List.of(targetUser));
 
         Wallet wallet = new Wallet(8L);
         wallet.setId(18L);
         wallet.forceSetBalance(new BigDecimal("10000.0000"));
         when(walletRepository.findByUserId(8L)).thenReturn(Optional.of(wallet));
 
-        Map<String, Object> result = adminService.topUp("trader@fnmf.com", new BigDecimal("5000.0000"));
+        Map<String, Object> body = Map.of("email", "trader@fnmf.com", "balance", 50000.00);
+        ResponseEntity<Map<String, Object>> response = adminController.setBalance("Bearer " + token, body);
 
-        assertEquals("SUCCESS", result.get("status"));
-        assertEquals(new BigDecimal("15000.0000"), wallet.getBalanceUsd());
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertNotNull(response.getBody());
+        assertEquals("SUCCESS", response.getBody().get("status"));
+        assertEquals("trader@fnmf.com", response.getBody().get("email"));
+        assertEquals(new BigDecimal("50000.0"), wallet.getBalanceUsd());
         verify(walletRepository).save(wallet);
+    }
 
-        ArgumentCaptor<Transaction> txCaptor = ArgumentCaptor.forClass(Transaction.class);
-        verify(transactionRepository).save(txCaptor.capture());
-        Transaction tx = txCaptor.getValue();
-        assertEquals(18L, tx.getWalletId());
-        assertEquals("TOPUP", tx.getType());
-        assertEquals(new BigDecimal("5000.0000"), tx.getTotalAmount());
+    @Test
+    @DisplayName("12b. USER thường gọi set-balance bị từ chối với HTTP 403")
+    public void testNormalUserSetBalance_forbidden403() {
+        String token = "user.token.jwt";
+        when(jwtUtil.validateToken(token)).thenReturn(true);
+        when(jwtUtil.getEmailFromToken(token)).thenReturn("user@fnmf.com");
+
+        User normalUser = new User("user@fnmf.com", "hash", "User", UserRole.USER);
+        when(userRepository.findByEmail("user@fnmf.com")).thenReturn(Optional.of(normalUser));
+
+        ResponseEntity<Map<String, Object>> response = adminController.setBalance(
+                "Bearer " + token, Map.of("email", "target@fnmf.com", "balance", 50000.00)
+        );
+
+        assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
+        verify(walletRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("12c. Không có token hoặc token không hợp lệ gọi set-balance trả về HTTP 401")
+    public void testNoTokenSetBalance_unauthorized401() {
+        ResponseEntity<Map<String, Object>> res1 = adminController.setBalance(
+                null, Map.of("email", "target@fnmf.com", "balance", 50000.00)
+        );
+        assertEquals(HttpStatus.UNAUTHORIZED, res1.getStatusCode());
+
+        when(jwtUtil.validateToken("bad.token")).thenReturn(false);
+        ResponseEntity<Map<String, Object>> res2 = adminController.setBalance(
+                "Bearer bad.token", Map.of("email", "target@fnmf.com", "balance", 50000.00)
+        );
+        assertEquals(HttpStatus.UNAUTHORIZED, res2.getStatusCode());
+    }
+
+    @Test
+    @DisplayName("12d. Set balance với email không tồn tại trả về HTTP 400")
+    public void testSetBalance_userNotFound_badRequest400() {
+        String token = "admin.valid.token";
+        when(jwtUtil.validateToken(token)).thenReturn(true);
+        when(jwtUtil.getEmailFromToken(token)).thenReturn("admin@fnmf.com");
+
+        User admin = new User("admin@fnmf.com", "hash", "Admin", UserRole.ADMIN);
+        when(userRepository.findByEmail("admin@fnmf.com")).thenReturn(Optional.of(admin));
+
+        when(userRepository.findAllByEmailIgnoreCase("nonexistent@fnmf.com")).thenReturn(Collections.emptyList());
+
+        ResponseEntity<Map<String, Object>> response = adminController.setBalance(
+                "Bearer " + token, Map.of("email", "nonexistent@fnmf.com", "balance", 50000.00)
+        );
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+        assertNotNull(response.getBody());
+        assertTrue(response.getBody().get("message").toString().contains("Không tìm thấy tài khoản"));
+    }
+
+    @Test
+    @DisplayName("12e. Set balance khi người dùng chưa có ví tiền trả về HTTP 400 với thông báo rõ ràng")
+    public void testSetBalance_userHasNoWallet_badRequest400() {
+        String token = "admin.valid.token";
+        when(jwtUtil.validateToken(token)).thenReturn(true);
+        when(jwtUtil.getEmailFromToken(token)).thenReturn("admin@fnmf.com");
+
+        User admin = new User("admin@fnmf.com", "hash", "Admin", UserRole.ADMIN);
+        when(userRepository.findByEmail("admin@fnmf.com")).thenReturn(Optional.of(admin));
+
+        User userNoWallet = new User("nowallet@fnmf.com", "hash", "No Wallet", UserRole.USER);
+        userNoWallet.setId(99L);
+        when(userRepository.findAllByEmailIgnoreCase("nowallet@fnmf.com")).thenReturn(List.of(userNoWallet));
+        when(walletRepository.findByUserId(99L)).thenReturn(Optional.empty());
+
+        ResponseEntity<Map<String, Object>> response = adminController.setBalance(
+                "Bearer " + token, Map.of("email", "nowallet@fnmf.com", "balance", 50000.00)
+        );
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+        assertNotNull(response.getBody());
+        assertEquals("Người dùng chưa có ví tiền", response.getBody().get("message"));
+    }
+
+    @Test
+    @DisplayName("12f. Set balance với số dư âm, NaN, Infinity, thiếu hoặc rỗng trả về HTTP 400")
+    public void testSetBalance_invalidBalanceValues_badRequest400() {
+        String token = "admin.valid.token";
+        when(jwtUtil.validateToken(token)).thenReturn(true);
+        when(jwtUtil.getEmailFromToken(token)).thenReturn("admin@fnmf.com");
+
+        User admin = new User("admin@fnmf.com", "hash", "Admin", UserRole.ADMIN);
+        when(userRepository.findByEmail("admin@fnmf.com")).thenReturn(Optional.of(admin));
+
+        Object[] invalidBalances = {
+                -100, -0.01, "NaN", "Infinity", "-Infinity", "+Infinity",
+                Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY,
+                "", "   ", "abc", null
+        };
+
+        for (Object invalidBal : invalidBalances) {
+            Map<String, Object> body = new java.util.HashMap<>();
+            body.put("email", "trader@fnmf.com");
+            if (invalidBal != null) {
+                body.put("balance", invalidBal);
+            }
+
+            ResponseEntity<Map<String, Object>> response = adminController.setBalance("Bearer " + token, body);
+            assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode(), "Phải trả về 400 với số dư: " + invalidBal);
+            assertNotNull(response.getBody());
+            assertEquals("ERROR", response.getBody().get("status"));
+        }
+    }
+
+    @Test
+    @DisplayName("12g. Các endpoint topup, grant-crypto, reset đã bị xóa hoàn toàn và trả về 404")
+    public void testRemovedEndpoints_return404AndNoMethodsExist() throws Exception {
+        // 1. Kiểm tra reflection: không còn method topUp, grantCrypto, resetAccount trong Controller và Service
+        assertThrows(NoSuchMethodException.class, () -> AdminController.class.getDeclaredMethod("topUp", String.class, Map.class));
+        assertThrows(NoSuchMethodException.class, () -> AdminController.class.getDeclaredMethod("grantCrypto", String.class, Map.class));
+        assertThrows(NoSuchMethodException.class, () -> AdminController.class.getDeclaredMethod("resetAccount", String.class, Map.class));
+
+        assertThrows(NoSuchMethodException.class, () -> AdminService.class.getDeclaredMethod("topUp", String.class, BigDecimal.class));
+        assertThrows(NoSuchMethodException.class, () -> AdminService.class.getDeclaredMethod("grantCrypto", String.class, String.class, BigDecimal.class, BigDecimal.class));
+        assertThrows(NoSuchMethodException.class, () -> AdminService.class.getDeclaredMethod("resetAccount", String.class));
+
+        // 2. Kiểm tra MockMvc: các endpoint trả về 404 NOT_FOUND
+        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(adminController).build();
+        mockMvc.perform(post("/api/admin/topup").contentType("application/json").content("{}"))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(post("/api/admin/grant-crypto").contentType("application/json").content("{}"))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(post("/api/admin/reset").contentType("application/json").content("{}"))
+                .andExpect(status().isNotFound());
     }
 
     @Test
@@ -585,5 +723,52 @@ public class AdminSecurityAndRoleTest {
         } catch (Exception e) {
             fail("Lỗi khi đọc static resources: " + e.getMessage());
         }
+    }
+
+    @Test
+    @DisplayName("24. UI admin.html và admin.js không còn ID/form/handler đã xóa và có modal đặt số dư mới")
+    public void testAdminUI_hasNoRemovedElementsOrHandlers() throws Exception {
+        File htmlFile = new File("src/main/resources/static/admin.html");
+        File jsFile = new File("src/main/resources/static/admin.js");
+
+        assertTrue(htmlFile.exists());
+        assertTrue(jsFile.exists());
+
+        String html = Files.readString(htmlFile.toPath());
+        String js = Files.readString(jsFile.toPath());
+
+        // Các ID và form cũ đã bị xóa hoàn toàn khỏi HTML và JS
+        String[] removedIds = {
+                "btnDoTopup", "btnDoGrant", "btnDoReset",
+                "topupTarget", "topupAmount",
+                "cryptoTarget", "cryptoSymbol", "cryptoQty", "cryptoPrice",
+                "manageTarget", "customBalance", "btnDoSetBalance",
+                "actionsGrid"
+        };
+        for (String id : removedIds) {
+            assertFalse(html.contains("id=\"" + id + "\""), "admin.html không được chứa id: " + id);
+            assertFalse(js.contains("document.getElementById('" + id + "')"), "admin.js không được truy vấn id: " + id);
+            assertFalse(js.contains("document.getElementById(\"" + id + "\")"), "admin.js không được truy vấn id: " + id);
+        }
+
+        // Không còn endpoint cũ trong JS
+        assertFalse(js.contains("/api/admin/topup"));
+        assertFalse(js.contains("/api/admin/grant-crypto"));
+        assertFalse(js.contains("/api/admin/reset"));
+
+        // Modal Đặt số dư mới có trong HTML
+        assertTrue(html.contains("id=\"balanceUpdateModal\""));
+        assertTrue(html.contains("id=\"modalBalanceUserId\""));
+        assertTrue(html.contains("id=\"modalBalanceEmail\""));
+        assertTrue(html.contains("id=\"modalBalanceCurrent\""));
+        assertTrue(html.contains("id=\"modalNewBalanceInput\""));
+        assertTrue(html.contains("id=\"btnCancelBalanceModal\""));
+        assertTrue(html.contains("id=\"btnConfirmBalanceModal\""));
+
+        // Handler đặt số dư có trong JS
+        assertTrue(js.contains("openBalanceModal"));
+        assertTrue(js.contains("closeBalanceModal"));
+        assertTrue(js.contains("confirmBalanceUpdate"));
+        assertTrue(js.contains("/api/admin/set-balance"));
     }
 }

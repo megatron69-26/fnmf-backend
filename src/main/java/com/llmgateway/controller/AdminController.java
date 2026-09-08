@@ -149,71 +149,6 @@ public class AdminController {
         }
     }
 
-    @PostMapping("/topup")
-    public ResponseEntity<Map<String, Object>> topUp(@RequestHeader(value = "Authorization", required = false) String authHeader,
-                                                     @RequestBody Map<String, Object> body) {
-        AdminAuthResult auth = verifyAdmin(authHeader);
-        if (!auth.isAuthorized()) return auth.toErrorResponse();
-
-        String target = extractTargetEmailOrId(body);
-        if (target == null) {
-            return ResponseEntity.badRequest().body(Map.of("status", "ERROR", "message", "Email người dùng không được để trống"));
-        }
-
-        BigDecimal amount;
-        try {
-            amount = new BigDecimal(body.getOrDefault("amount", 10000).toString().trim());
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().body(Map.of("status", "ERROR", "message", "Số tiền không hợp lệ"));
-        }
-
-        log.info("ADMIN AUDIT | admin={} | action=TOPUP | target={} | amount={}",
-                auth.adminUser.getEmail(), target, amount);
-
-        try {
-            Map<String, Object> res = adminService.topUp(target, amount);
-            return ResponseEntity.ok(res);
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(Map.of("status", "ERROR", "message", e.getMessage()));
-        } catch (org.springframework.orm.ObjectOptimisticLockingFailureException e) {
-            return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("status", "ERROR", "message", "Dữ liệu đã được cập nhật bởi thao tác khác, vui lòng thử lại."));
-        }
-    }
-
-    @PostMapping("/grant-crypto")
-    public ResponseEntity<Map<String, Object>> grantCrypto(@RequestHeader(value = "Authorization", required = false) String authHeader,
-                                                           @RequestBody Map<String, Object> body) {
-        AdminAuthResult auth = verifyAdmin(authHeader);
-        if (!auth.isAuthorized()) return auth.toErrorResponse();
-
-        String target = extractTargetEmailOrId(body);
-        if (target == null) {
-            return ResponseEntity.badRequest().body(Map.of("status", "ERROR", "message", "Email người dùng không được để trống"));
-        }
-
-        String symbol = body.getOrDefault("symbol", "BTCUSDT").toString().trim().toUpperCase();
-        BigDecimal quantity;
-        BigDecimal avgPrice;
-        try {
-            quantity = new BigDecimal(body.getOrDefault("quantity", 1.0).toString().trim());
-            avgPrice = new BigDecimal(body.getOrDefault("avgBuyPrice", 68000.0).toString().trim());
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().body(Map.of("status", "ERROR", "message", "Số lượng hoặc giá không hợp lệ"));
-        }
-
-        log.info("ADMIN AUDIT | admin={} | action=GRANT_CRYPTO | target={} | symbol={} | quantity={} | avgPrice={}",
-                auth.adminUser.getEmail(), target, symbol, quantity, avgPrice);
-
-        try {
-            Map<String, Object> res = adminService.grantCrypto(target, symbol, quantity, avgPrice);
-            return ResponseEntity.ok(res);
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(Map.of("status", "ERROR", "message", e.getMessage()));
-        } catch (org.springframework.orm.ObjectOptimisticLockingFailureException e) {
-            return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("status", "ERROR", "message", "Dữ liệu đã được cập nhật bởi thao tác khác, vui lòng thử lại."));
-        }
-    }
-
     @PostMapping("/set-balance")
     public ResponseEntity<Map<String, Object>> setBalance(@RequestHeader(value = "Authorization", required = false) String authHeader,
                                                           @RequestBody Map<String, Object> body) {
@@ -225,11 +160,32 @@ public class AdminController {
             return ResponseEntity.badRequest().body(Map.of("status", "ERROR", "message", "Email người dùng không được để trống"));
         }
 
+        if (body == null || !body.containsKey("balance") || body.get("balance") == null) {
+            return ResponseEntity.badRequest().body(Map.of("status", "ERROR", "message", "Số dư không được để trống"));
+        }
+
+        Object balObj = body.get("balance");
+        if (balObj instanceof Double d && (d.isNaN() || d.isInfinite())) {
+            return ResponseEntity.badRequest().body(Map.of("status", "ERROR", "message", "Số dư không hợp lệ"));
+        }
+        if (balObj instanceof Float f && (f.isNaN() || f.isInfinite())) {
+            return ResponseEntity.badRequest().body(Map.of("status", "ERROR", "message", "Số dư không hợp lệ"));
+        }
+
+        String balStr = balObj.toString().trim();
+        if (balStr.isEmpty() || balStr.equalsIgnoreCase("NaN") || balStr.contains("Infinity")) {
+            return ResponseEntity.badRequest().body(Map.of("status", "ERROR", "message", "Số dư không hợp lệ"));
+        }
+
         BigDecimal balance;
         try {
-            balance = new BigDecimal(body.getOrDefault("balance", 100000).toString().trim());
+            balance = new BigDecimal(balStr);
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(Map.of("status", "ERROR", "message", "Số dư không hợp lệ"));
+        }
+
+        if (balance.compareTo(BigDecimal.ZERO) < 0) {
+            return ResponseEntity.badRequest().body(Map.of("status", "ERROR", "message", "Số dư phải lớn hơn hoặc bằng 0"));
         }
 
         log.info("ADMIN AUDIT | admin={} | action=SET_BALANCE | target={} | balance={}",
@@ -242,27 +198,6 @@ public class AdminController {
             return ResponseEntity.badRequest().body(Map.of("status", "ERROR", "message", e.getMessage()));
         } catch (org.springframework.orm.ObjectOptimisticLockingFailureException e) {
             return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("status", "ERROR", "message", "Dữ liệu đã được cập nhật bởi thao tác khác, vui lòng thử lại."));
-        }
-    }
-
-    @PostMapping("/reset")
-    public ResponseEntity<Map<String, Object>> resetAccount(@RequestHeader(value = "Authorization", required = false) String authHeader,
-                                                            @RequestBody Map<String, Object> body) {
-        AdminAuthResult auth = verifyAdmin(authHeader);
-        if (!auth.isAuthorized()) return auth.toErrorResponse();
-
-        String target = extractTargetEmailOrId(body);
-        if (target == null) {
-            return ResponseEntity.badRequest().body(Map.of("status", "ERROR", "message", "Email người dùng không được để trống"));
-        }
-
-        log.info("ADMIN AUDIT | admin={} | action=RESET | target={}", auth.adminUser.getEmail(), target);
-
-        try {
-            Map<String, Object> res = adminService.resetAccount(target);
-            return ResponseEntity.ok(res);
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(Map.of("status", "ERROR", "message", e.getMessage()));
         }
     }
 
