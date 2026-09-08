@@ -233,15 +233,20 @@ public class DataInitializer implements CommandLineRunner {
             return;
         }
 
+        String targetEmail = email.trim().toLowerCase(java.util.Locale.ROOT);
+        if (!AuthService.isValidEmail(targetEmail)) {
+            log.warn("ADMIN BOOTSTRAP | FNMF_ADMIN_EMAIL='{}' không phải là địa chỉ email hợp lệ! Từ chối bootstrap admin.", targetEmail);
+            return;
+        }
+
         // Báo rõ ràng mật khẩu sẽ được cập nhật/reset mỗi khi khởi động lại
         log.warn("ADMIN BOOTSTRAP | CHÚ Ý: FNMF_ADMIN_BOOTSTRAP_ENABLED=true. Mật khẩu tài khoản admin sẽ được reset/đồng bộ theo biến môi trường mỗi khi server khởi động.");
 
-        String targetEmail = email.trim();
         // Giữ nguyên mật khẩu chính xác như người dùng nhập, tuyệt đối không trim() làm biến dạng mật khẩu
         String targetPassword = password;
 
         try {
-            java.util.Optional<com.llmgateway.entity.User> existingOpt = userRepository.findByEmail(targetEmail);
+            java.util.Optional<com.llmgateway.entity.User> existingOpt = userRepository.findByEmailIgnoreCase(targetEmail);
             if (existingOpt.isPresent()) {
                 com.llmgateway.entity.User user = existingOpt.get();
                 user.setRole(com.llmgateway.entity.UserRole.ADMIN);

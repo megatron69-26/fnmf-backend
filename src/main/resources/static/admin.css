@@ -345,3 +345,82 @@ tr:hover {
 .hidden {
     display: none !important;
 }
+
+.badge-warn {
+    background: #F5A62322;
+    color: #F5A623;
+    border: 1px solid #F5A623;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.badge-ok {
+    background: #08998122;
+    color: #089981;
+    border: 1px solid #089981;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.btn-xs {
+    padding: 4px 10px;
+    font-size: 11px;
+    border-radius: 4px;
+}
+
+.btn-secondary {
+    background: #2A2E39;
+    color: #D1D4DC;
+}
+
+.btn-secondary:hover {
+    background: #363A45;
+}
+
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.75);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.modal-card {
+    background: #131722;
+    border: 1px solid #232836;
+    border-radius: 12px;
+    padding: 24px;
+    width: 90%;
+    max-width: 480px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.8);
+}
+
+.modal-title {
+    font-size: 16px;
+    font-weight: 700;
+    color: #00F0FF;
+    margin-bottom: 12px;
+}
+
+.modal-desc {
+    font-size: 13px;
+    color: #A0AEC0;
+    margin-bottom: 16px;
+    line-height: 1.5;
+}
+
+.modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 16px;
+}

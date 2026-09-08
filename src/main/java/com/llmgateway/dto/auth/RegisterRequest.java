@@ -1,11 +1,13 @@
 package com.llmgateway.dto.auth;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
 public class RegisterRequest {
 
-    private String username;
+    @NotBlank(message = "Email không được để trống")
+    @JsonAlias("username")
     private String email;
 
     @NotBlank(message = "Mật khẩu không được để trống")
@@ -17,29 +19,33 @@ public class RegisterRequest {
     public RegisterRequest() {
     }
 
-    public RegisterRequest(String username, String password) {
-        this.username = username;
-        this.email = username;
+    public RegisterRequest(String email, String password) {
+        this.email = email;
         this.password = password;
-        this.fullName = username;
+        this.fullName = email;
     }
 
-    public String getUsername() {
-        return username != null && !username.isBlank() ? username : email;
-    }
-
-    public void setUsername(String username) {
-        this.username = username;
-        if (this.email == null) this.email = username;
+    public RegisterRequest(String email, String password, String fullName) {
+        this.email = email;
+        this.password = password;
+        this.fullName = fullName;
     }
 
     public String getEmail() {
-        return email != null && !email.isBlank() ? email : username;
+        return email;
     }
 
     public void setEmail(String email) {
         this.email = email;
-        if (this.username == null) this.username = email;
+    }
+
+    // Tương thích ngược với các client cũ
+    public String getUsername() {
+        return email;
+    }
+
+    public void setUsername(String username) {
+        this.email = username;
     }
 
     public String getPassword() {
@@ -51,7 +57,7 @@ public class RegisterRequest {
     }
 
     public String getFullName() {
-        return fullName != null && !fullName.isBlank() ? fullName : getUsername();
+        return (fullName != null && !fullName.isBlank()) ? fullName : email;
     }
 
     public void setFullName(String fullName) {

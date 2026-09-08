@@ -16,6 +16,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 
@@ -39,11 +40,24 @@ public class AdminService {
         this.transactionRepository = transactionRepository;
     }
 
-    public User findUserByIdentifier(String identifier) {
-        if (identifier == null || identifier.isBlank()) {
-            throw new IllegalArgumentException("Tên đăng nhập hoặc email không được để trống");
+    public User findUserByEmailOrId(String emailOrId) {
+        if (emailOrId == null || emailOrId.isBlank()) {
+            throw new IllegalArgumentException("Email người dùng không được để trống");
         }
-        String clean = identifier.trim();
+        String clean = emailOrId.trim();
+
+        // 1. Nếu là số ID người dùng (userId)
+        if (clean.matches("^[0-9]+$")) {
+            try {
+                Long id = Long.parseLong(clean);
+                Optional<User> userOpt = userRepository.findById(id);
+                if (userOpt.isPresent()) {
+                    return userOpt.get();
+                }
+            } catch (NumberFormatException ignored) {}
+        }
+
+        // 2. Tìm kiếm chính xác case-insensitive theo email
         List<User> matches = userRepository.findAllByEmailIgnoreCase(clean);
         if (matches.isEmpty()) {
             throw new IllegalArgumentException("Không tìm thấy tài khoản: " + clean);
@@ -54,9 +68,52 @@ public class AdminService {
         return matches.get(0);
     }
 
+    public User findUserByIdentifier(String identifier) {
+        return findUserByEmailOrId(identifier);
+    }
+
+    @Transactional
+    public Map<String, Object> updateUserEmail(String adminEmail, Long userId, String newEmailRaw) {
+        if (userId == null) {
+            throw new IllegalArgumentException("ID người dùng không được để trống");
+        }
+        if (newEmailRaw == null || newEmailRaw.isBlank()) {
+            throw new IllegalArgumentException("Email mới không được để trống");
+        }
+
+        String normalizedEmail = AuthService.normalizeEmail(newEmailRaw);
+        if (!AuthService.isValidEmail(normalizedEmail)) {
+            throw new IllegalArgumentException("Định dạng email mới không hợp lệ: " + newEmailRaw.trim());
+        }
+
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy người dùng với ID: " + userId));
+
+        // Kiểm tra xem email mới đã được tài khoản khác sử dụng hay chưa
+        Optional<User> existing = userRepository.findByEmailIgnoreCase(normalizedEmail);
+        if (existing.isPresent() && !existing.get().getId().equals(userId)) {
+            throw new IllegalArgumentException("Email '" + normalizedEmail + "' đã được sử dụng bởi tài khoản khác!");
+        }
+
+        String oldEmail = user.getEmail();
+        user.setEmail(normalizedEmail);
+        userRepository.save(user);
+
+        log.info("ADMIN AUDIT | admin='{}' | action=UPDATE_EMAIL | userId={} | oldEmail='{}' | newEmail='{}'",
+                adminEmail, userId, oldEmail, normalizedEmail);
+
+        Map<String, Object> res = new HashMap<>();
+        res.put("status", "SUCCESS");
+        res.put("message", "Cập nhật email thành công!");
+        res.put("userId", userId);
+        res.put("oldEmail", oldEmail);
+        res.put("newEmail", normalizedEmail);
+        return res;
+    }
+
     @Transactional
     public Map<String, Object> topUp(String identifier, BigDecimal amount) {
-        User user = findUserByIdentifier(identifier);
+        User user = findUserByEmailOrId(identifier);
         Wallet wallet = walletRepository.findByUserId(user.getId())
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy ví của người dùng: " + user.getEmail()));
 
@@ -82,7 +139,7 @@ public class AdminService {
 
     @Transactional
     public Map<String, Object> grantCrypto(String identifier, String symbol, BigDecimal quantity, BigDecimal avgPrice) {
-        User user = findUserByIdentifier(identifier);
+        User user = findUserByEmailOrId(identifier);
         Wallet wallet = walletRepository.findByUserId(user.getId())
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy ví của người dùng: " + user.getEmail()));
 
@@ -119,7 +176,7 @@ public class AdminService {
 
     @Transactional
     public Map<String, Object> setBalance(String identifier, BigDecimal balance) {
-        User user = findUserByIdentifier(identifier);
+        User user = findUserByEmailOrId(identifier);
         Wallet wallet = walletRepository.findByUserId(user.getId())
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy ví của người dùng: " + user.getEmail()));
 
@@ -139,7 +196,7 @@ public class AdminService {
 
     @Transactional
     public Map<String, Object> resetAccount(String identifier) {
-        User user = findUserByIdentifier(identifier);
+        User user = findUserByEmailOrId(identifier);
         Wallet wallet = walletRepository.findByUserId(user.getId())
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy ví của người dùng: " + user.getEmail()));
 

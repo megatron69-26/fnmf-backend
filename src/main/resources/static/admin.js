@@ -2,7 +2,7 @@
  * FNMF CLOUD ADMIN - SECURE CLIENT ENGINE
  * - In-memory token storage strictly (RAM only).
  * - Strict DOM createElement & textContent for XSS prevention.
- * - Strict CSP compliant (No inline handlers).
+ * - Strict CSP compliant (No inline handlers, no inline styles).
  */
 (function() {
     'use strict';
@@ -15,6 +15,7 @@
     let isActionPending = false;
     let cachedDbData = null;
     let currentTab = 'wallets';
+    let targetUserIdForEmailUpdate = null;
 
     // DOM Elements
     const authCard = document.getElementById('authCard');
@@ -47,8 +48,16 @@
     const btnDoSetBalance = document.getElementById('btnDoSetBalance');
     const btnDoReset = document.getElementById('btnDoReset');
 
+    const emailUpdateModal = document.getElementById('emailUpdateModal');
+    const modalOldIdentifier = document.getElementById('modalOldIdentifier');
+    const modalNewEmailInput = document.getElementById('modalNewEmailInput');
+    const btnCancelEmailModal = document.getElementById('btnCancelEmailModal');
+    const btnConfirmEmailModal = document.getElementById('btnConfirmEmailModal');
+
     const tabButtons = document.querySelectorAll('.tab-btn');
     const presetButtons = document.querySelectorAll('.btn-preset');
+
+    const EMAIL_REGEX = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
 
     // Logging function using textContent strictly
     function logMessage(msg, type) {
@@ -96,22 +105,27 @@
 
     // Login handler
     async function login() {
-        const identifier = adminEmailInput.value.trim();
-        const password = adminPasswordInput.value.trim();
+        const email = adminEmailInput.value.trim().toLowerCase();
+        const password = adminPasswordInput.value;
 
-        if (!identifier || !password) {
-            showBanner('Vui lòng nhập đầy đủ tên đăng nhập/email và mật khẩu!', 'error');
+        if (!email || !password) {
+            showBanner('Vui lòng nhập đầy đủ Email quản trị và Mật khẩu!', 'error');
+            return;
+        }
+
+        if (!EMAIL_REGEX.test(email)) {
+            showBanner('Định dạng Email quản trị không hợp lệ!', 'error');
             return;
         }
 
         btnLogin.disabled = true;
-        logMessage('Đang xác thực đăng nhập: ' + identifier + '...', 'info');
+        logMessage('Đang xác thực đăng nhập: ' + email + '...', 'info');
 
         try {
             const res = await fetch('/api/auth/login', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email: identifier, password: password })
+                body: JSON.stringify({ email: email, password: password })
             });
 
             if (!res.ok) {
@@ -126,7 +140,7 @@
 
             // Lưu token chỉ trong bộ nhớ RAM
             authToken = data.token;
-            currentAdminEmail = (data.user && data.user.email) ? data.user.email : identifier;
+            currentAdminEmail = (data.user && data.user.email) ? data.user.email : email;
 
             // Xóa mật khẩu khỏi input form ngay sau khi đăng nhập
             adminPasswordInput.value = '';
@@ -213,6 +227,19 @@
         tableContainer.appendChild(emptyDiv);
     }
 
+    function openEmailModal(userId, oldEmail) {
+        targetUserIdForEmailUpdate = userId;
+        modalOldIdentifier.textContent = oldEmail;
+        modalNewEmailInput.value = '';
+        emailUpdateModal.classList.remove('hidden');
+        modalNewEmailInput.focus();
+    }
+
+    function closeEmailModal() {
+        targetUserIdForEmailUpdate = null;
+        emailUpdateModal.classList.add('hidden');
+    }
+
     function renderCurrentTable() {
         if (!cachedDbData) {
             renderEmptyState('Chưa có dữ liệu hoặc phiên đăng nhập đã hết hạn.');
@@ -234,6 +261,80 @@
         const tbody = document.createElement('tbody');
         const headerRow = document.createElement('tr');
 
+        if (currentTab === 'users') {
+            const userHeaders = ['ID', 'Email Người Dùng', 'Họ Và Tên', 'Phân Quyền', 'Trạng Thái Email', 'Hành Động'];
+            userHeaders.forEach(lbl => {
+                const th = document.createElement('th');
+                th.textContent = lbl;
+                headerRow.appendChild(th);
+            });
+            thead.appendChild(headerRow);
+            table.appendChild(thead);
+
+            list.forEach(row => {
+                const tr = document.createElement('tr');
+                const userId = row.id !== undefined ? row.id : (row.ID !== undefined ? row.ID : '');
+                const emailStr = String(row.email !== undefined ? row.email : (row.EMAIL !== undefined ? row.EMAIL : ''));
+                const fullNameStr = String(row.full_name !== undefined ? row.full_name : (row.FULL_NAME !== undefined ? row.FULL_NAME : ''));
+                const roleStr = String(row.role !== undefined ? row.role : (row.ROLE !== undefined ? row.ROLE : 'USER'));
+
+                const isEmailValid = EMAIL_REGEX.test(emailStr);
+                const needsUpdate = (row.needsEmailUpdate !== undefined) ? Boolean(row.needsEmailUpdate) : !isEmailValid;
+
+                // 1. ID
+                const tdId = document.createElement('td');
+                tdId.textContent = String(userId);
+                tr.appendChild(tdId);
+
+                // 2. Email
+                const tdEmail = document.createElement('td');
+                tdEmail.textContent = emailStr;
+                tr.appendChild(tdEmail);
+
+                // 3. Full Name
+                const tdName = document.createElement('td');
+                tdName.textContent = fullNameStr;
+                tr.appendChild(tdName);
+
+                // 4. Role
+                const tdRole = document.createElement('td');
+                tdRole.textContent = roleStr;
+                tr.appendChild(tdRole);
+
+                // 5. Trạng Thái Email
+                const tdStatus = document.createElement('td');
+                const badge = document.createElement('span');
+                if (needsUpdate) {
+                    badge.className = 'badge-warn';
+                    badge.textContent = '⚠️ Cần cập nhật email';
+                } else {
+                    badge.className = 'badge-ok';
+                    badge.textContent = '✅ Hợp lệ';
+                }
+                tdStatus.appendChild(badge);
+                tr.appendChild(tdStatus);
+
+                // 6. Hành Động
+                const tdAction = document.createElement('td');
+                if (needsUpdate) {
+                    const btnEdit = document.createElement('button');
+                    btnEdit.className = 'btn btn-blue btn-xs';
+                    btnEdit.textContent = '✉️ Đổi email';
+                    btnEdit.addEventListener('click', () => openEmailModal(userId, emailStr));
+                    tdAction.appendChild(btnEdit);
+                } else {
+                    tdAction.textContent = '-';
+                }
+                tr.appendChild(tdAction);
+
+                tbody.appendChild(tr);
+            });
+
+            table.appendChild(tbody);
+            tableContainer.appendChild(table);
+            return;
+        }
+
         let columns = [];
         if (currentTab === 'wallets') {
             columns = [
@@ -251,14 +352,6 @@
                 { key: 'QUANTITY', label: 'Số Lượng' },
                 { key: 'AVG_BUY_PRICE', label: 'Giá Vốn ($)' },
                 { key: 'UPDATED_AT', label: 'Cập Nhật' }
-            ];
-        } else if (currentTab === 'users') {
-            columns = [
-                { key: 'ID', label: 'ID' },
-                { key: 'EMAIL', label: 'Tên Đăng Nhập / Email' },
-                { key: 'FULL_NAME', label: 'Họ Và Tên' },
-                { key: 'ROLE', label: 'Phân Quyền' },
-                { key: 'CREATED_AT', label: 'Ngày Tạo' }
             ];
         } else if (currentTab === 'transactions') {
             columns = [
@@ -285,7 +378,7 @@
             const tr = document.createElement('tr');
             columns.forEach(col => {
                 const td = document.createElement('td');
-                // Support both uppercase and lowercase DB column keys
+                // Hỗ trợ cả key chữ hoa và chữ thường từ JDBC PostgreSQL
                 const val = (row[col.key] !== undefined) ? row[col.key] :
                             (row[col.key.toLowerCase()] !== undefined ? row[col.key.toLowerCase()] : '');
                 td.textContent = (val !== null && val !== undefined) ? String(val) : '';
@@ -407,12 +500,52 @@
             });
         });
 
+        // Modal event listeners
+        if (btnCancelEmailModal) {
+            btnCancelEmailModal.addEventListener('click', closeEmailModal);
+        }
+        if (btnConfirmEmailModal) {
+            btnConfirmEmailModal.addEventListener('click', async () => {
+                const newEmail = modalNewEmailInput.value.trim().toLowerCase();
+                if (!newEmail || !EMAIL_REGEX.test(newEmail)) {
+                    showBanner('Vui lòng nhập địa chỉ email hợp lệ (VD: user@example.com)!', 'error');
+                    return;
+                }
+                if (!window.confirm('Xác nhận cập nhật email của tài khoản #' + targetUserIdForEmailUpdate + ' thành ' + newEmail + '?')) {
+                    return;
+                }
+
+                btnConfirmEmailModal.disabled = true;
+                try {
+                    const res = await apiFetch('/api/admin/users/' + targetUserIdForEmailUpdate + '/email', {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ email: newEmail })
+                    });
+                    const data = await res.json().catch(() => ({}));
+                    if (!res.ok || data.status === 'ERROR') {
+                        throw new Error(data.message || data.error || ('Cập nhật thất bại (HTTP ' + res.status + ')'));
+                    }
+
+                    showBanner('Cập nhật email thành công cho user #' + targetUserIdForEmailUpdate + '!', 'success');
+                    logMessage('✅ Đã đổi email user #' + targetUserIdForEmailUpdate + ' sang ' + newEmail, 'info');
+                    closeEmailModal();
+                    await loadDbOverview(true);
+                } catch (e) {
+                    showBanner(e.message, 'error');
+                    logMessage('❌ Lỗi cập nhật email: ' + e.message, 'err');
+                } finally {
+                    btnConfirmEmailModal.disabled = false;
+                }
+            });
+        }
+
         // USD Topup
         btnDoTopup.addEventListener('click', () => {
-            const target = topupTarget.value.trim();
+            const target = topupTarget.value.trim().toLowerCase();
             const amount = topupAmount.value.trim();
             if (!target) {
-                showBanner('Vui lòng nhập tên đăng nhập hoặc email tài khoản cần nạp tiền!', 'error');
+                showBanner('Vui lòng nhập email người dùng cần nạp tiền!', 'error');
                 return;
             }
             if (!amount || parseFloat(amount) <= 0) {
@@ -425,19 +558,19 @@
                 'Nạp tiền USD',
                 'Xác nhận nạp $' + amount + ' USD vào tài khoản "' + target + '"?',
                 '/api/admin/topup',
-                { identifier: target, amount: parseFloat(amount) }
+                { email: target, identifier: target, amount: parseFloat(amount) }
             );
         });
 
         // Grant Crypto
         btnDoGrant.addEventListener('click', () => {
-            const target = cryptoTarget.value.trim();
+            const target = cryptoTarget.value.trim().toLowerCase();
             const symbol = cryptoSymbol.value.trim();
             const quantity = cryptoQty.value.trim();
             const price = cryptoPrice.value.trim();
 
             if (!target) {
-                showBanner('Vui lòng nhập tên đăng nhập hoặc email tài khoản cần cấp tài sản!', 'error');
+                showBanner('Vui lòng nhập email người dùng cần cấp tài sản!', 'error');
                 return;
             }
             if (!quantity || parseFloat(quantity) <= 0) {
@@ -450,17 +583,17 @@
                 'Cấp Coin',
                 'Xác nhận cấp ' + quantity + ' ' + symbol + ' cho tài khoản "' + target + '"?',
                 '/api/admin/grant-crypto',
-                { identifier: target, symbol: symbol, quantity: parseFloat(quantity), avgBuyPrice: parseFloat(price) }
+                { email: target, identifier: target, symbol: symbol, quantity: parseFloat(quantity), avgBuyPrice: parseFloat(price) }
             );
         });
 
         // Set Balance
         btnDoSetBalance.addEventListener('click', () => {
-            const target = manageTarget.value.trim();
+            const target = manageTarget.value.trim().toLowerCase();
             const balance = customBalance.value.trim();
 
             if (!target) {
-                showBanner('Vui lòng nhập tên đăng nhập hoặc email tài khoản!', 'error');
+                showBanner('Vui lòng nhập email người dùng!', 'error');
                 return;
             }
             if (!balance || parseFloat(balance) < 0) {
@@ -473,15 +606,15 @@
                 'Đặt số dư',
                 'Xác nhận đặt số dư của tài khoản "' + target + '" thành $' + balance + ' USD?',
                 '/api/admin/set-balance',
-                { identifier: target, balance: parseFloat(balance) }
+                { email: target, identifier: target, balance: parseFloat(balance) }
             );
         });
 
         // Reset Account
         btnDoReset.addEventListener('click', () => {
-            const target = manageTarget.value.trim();
+            const target = manageTarget.value.trim().toLowerCase();
             if (!target) {
-                showBanner('Vui lòng nhập tên đăng nhập hoặc email tài khoản cần reset!', 'error');
+                showBanner('Vui lòng nhập email người dùng cần reset!', 'error');
                 return;
             }
 
@@ -490,7 +623,7 @@
                 'Reset tài khoản',
                 'CẢNH BÁO: Bạn có chắc chắn muốn RESET toàn bộ danh mục và đặt lại số dư về $10,000 USD cho "' + target + '"?',
                 '/api/admin/reset',
-                { identifier: target }
+                { email: target, identifier: target }
             );
         });
     }

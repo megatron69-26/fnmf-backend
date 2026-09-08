@@ -1,5 +1,7 @@
 package com.llmgateway.dto.auth;
 
+import com.llmgateway.service.AuthService;
+
 import java.time.LocalDateTime;
 
 public class UserDto {
@@ -8,6 +10,8 @@ public class UserDto {
     private String fullName;
     private String avatarUrl;
     private String role;
+    private boolean needsEmailUpdate;
+    private boolean validEmail;
     private LocalDateTime createdAt;
 
     public UserDto() {
@@ -23,6 +27,8 @@ public class UserDto {
         this.fullName = fullName;
         this.avatarUrl = avatarUrl;
         this.role = role != null ? role : "USER";
+        this.validEmail = AuthService.isValidEmail(email);
+        this.needsEmailUpdate = !this.validEmail;
         this.createdAt = createdAt;
     }
 
@@ -40,6 +46,8 @@ public class UserDto {
 
     public void setEmail(String email) {
         this.email = email;
+        this.validEmail = AuthService.isValidEmail(email);
+        this.needsEmailUpdate = !this.validEmail;
     }
 
     public String getFullName() {
@@ -64,6 +72,22 @@ public class UserDto {
 
     public void setRole(String role) {
         this.role = role != null ? role : "USER";
+    }
+
+    public boolean isNeedsEmailUpdate() {
+        return needsEmailUpdate;
+    }
+
+    public void setNeedsEmailUpdate(boolean needsEmailUpdate) {
+        this.needsEmailUpdate = needsEmailUpdate;
+    }
+
+    public boolean isValidEmail() {
+        return validEmail;
+    }
+
+    public void setValidEmail(boolean validEmail) {
+        this.validEmail = validEmail;
     }
 
     public LocalDateTime getCreatedAt() {

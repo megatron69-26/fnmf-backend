@@ -6,6 +6,7 @@ import com.llmgateway.dto.auth.RegisterRequest;
 import com.llmgateway.dto.auth.UserDto;
 import com.llmgateway.dto.auth.WalletDto;
 import com.llmgateway.entity.User;
+import com.llmgateway.entity.UserRole;
 import com.llmgateway.entity.Wallet;
 import com.llmgateway.repository.UserRepository;
 import com.llmgateway.repository.WalletRepository;
@@ -16,10 +17,14 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Locale;
+import java.util.regex.Pattern;
+
 @Service
 public class AuthService {
 
     private static final Logger log = LoggerFactory.getLogger(AuthService.class);
+    private static final Pattern EMAIL_PATTERN = Pattern.compile("^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$");
 
     private final UserRepository userRepository;
     private final WalletRepository walletRepository;
@@ -36,55 +41,59 @@ public class AuthService {
         this.jwtUtil = jwtUtil;
     }
 
-    // ====================================================================================
-    // 🎓 [CÂU HỎI BẢO VỆ ĐỒ ÁN: BẢO MẬT & KHỞI TẠO TÀI KHOẢN]
-    // ------------------------------------------------------------------------------------
-    // CÂU HỎI CỦA GIẢNG VIÊN:
-    //   "Mật khẩu người dùng được lưu trữ thế nào trong CSDL Oracle? Làm sao chống lộ lọt
-    //    mật khẩu và đảm bảo mỗi user mới luôn được cấp đúng ví ảo $10,000 không bị lỗi?"
-    //
-    // CÂU TRẢ LỜI CỦA MÃ NGUỒN (CODE TRẢ LỜI):
-    //   1. BẢO MẬT: Sử dụng chuẩn băm BCryptPasswordEncoder với Salt ngẫu nhiên 10 vòng.
-    //      Mật khẩu gốc không bao giờ được lưu dưới dạng plaintext.
-    //   2. TÍNH TOÀN VẸN (ACID): Dùng @Transactional. Nếu tạo User thành công nhưng tạo
-    //      Ví ảo ($10,000) bị lỗi thì toàn bộ quá trình tự động Rollback (hủy), tránh tài
-    //      khoản 'mồ côi ví'.
-    //   3. PHÂN QUYỀN STATELESS: Sinh JWT Token (HMAC-SHA256) chứa UserId và Email với
-    //      thời hạn 24 giờ.
-    // ====================================================================================
+    /**
+     * Kiểm tra định dạng email tiêu chuẩn RFC 5322 cơ bản.
+     */
+    public static boolean isValidEmail(String email) {
+        if (email == null || email.isBlank()) {
+            return false;
+        }
+        return EMAIL_PATTERN.matcher(email.trim()).matches();
+    }
+
+    /**
+     * Chuẩn hoá email: trim và chuyển về lowercase theo Locale.ROOT.
+     */
+    public static String normalizeEmail(String email) {
+        if (email == null) return null;
+        return email.trim().toLowerCase(Locale.ROOT);
+    }
+
     @Transactional
     public AuthResponse register(RegisterRequest request) {
-        String identifier = request.getUsername();
-        if (identifier == null || identifier.isBlank()) {
-            identifier = request.getEmail();
-        }
-        if (identifier == null || identifier.isBlank()) {
-            throw new IllegalArgumentException("Tên đăng nhập không được để trống!");
-        }
-        identifier = identifier.trim().toLowerCase();
-
-        if (userRepository.existsByEmail(identifier)) {
-            throw new IllegalArgumentException("Tài khoản '" + identifier + "' đã tồn tại trên hệ thống!");
+        String rawEmail = request.getEmail();
+        if (rawEmail == null || rawEmail.isBlank()) {
+            throw new IllegalArgumentException("Email không được để trống!");
         }
 
-        // 1. Băm mật khẩu bằng BCrypt (Bảo vệ thông tin người dùng)
+        String email = normalizeEmail(rawEmail);
+        if (!isValidEmail(email)) {
+            throw new IllegalArgumentException("Định dạng email không hợp lệ: " + rawEmail.trim());
+        }
+
+        // Kiểm tra trùng lặp email không phân biệt hoa thường
+        if (userRepository.findByEmailIgnoreCase(email).isPresent()) {
+            throw new IllegalArgumentException("Email '" + email + "' đã tồn tại trên hệ thống!");
+        }
+
+        // 1. Băm mật khẩu bằng BCrypt (không trim để bảo toàn ký tự)
         String hashedPassword = passwordEncoder.encode(request.getPassword());
 
-        // 2. Lưu User vào CSDL Oracle/H2
+        // 2. Lưu User vào CSDL với role mặc định luôn là USER
         String fullName = request.getFullName();
         if (fullName == null || fullName.isBlank()) {
-            fullName = identifier;
+            fullName = email;
         }
-        User user = new User(identifier, hashedPassword, fullName.trim(), com.llmgateway.entity.UserRole.USER);
+        User user = new User(email, hashedPassword, fullName.trim(), UserRole.USER);
         user = userRepository.save(user);
 
-        // 3. Tự động cấp ví ảo $10,000 vốn ban đầu (Bảng WALLETS)
+        // 3. Tự động cấp ví ảo $10,000 vốn ban đầu (ACID)
         Wallet wallet = new Wallet(user.getId());
         wallet = walletRepository.save(wallet);
 
-        log.info("USER REGISTERED | userId={} | username={} | walletId={}", user.getId(), user.getEmail(), wallet.getId());
+        log.info("USER REGISTERED | userId={} | email={} | walletId={}", user.getId(), user.getEmail(), wallet.getId());
 
-        // 4. Sinh JWT token cho phiên làm việc
+        // 4. Sinh JWT token định danh bằng email đã chuẩn hoá
         String token = jwtUtil.generateToken(user.getEmail(), user.getId());
 
         UserDto userDto = new UserDto(user.getId(), user.getEmail(), user.getFullName(), user.getAvatarUrl(), user.getRole().name(), user.getCreatedAt());
@@ -95,26 +104,29 @@ public class AuthService {
 
     /**
      * Đăng nhập:
-     * 1. Tìm user theo username/email
-     * 2. Kiểm tra mật khẩu băm
-     * 3. Lấy thông tin ví ảo
-     * 4. Sinh JWT Token
+     * 1. Kiểm tra định dạng email và chuẩn hoá
+     * 2. Tìm user theo email (case-insensitive)
+     * 3. Kiểm tra mật khẩu băm
+     * 4. Lấy thông tin ví ảo
+     * 5. Sinh JWT Token
      */
     public AuthResponse login(LoginRequest request) {
-        String identifier = request.getUsername();
-        if (identifier == null || identifier.isBlank()) {
-            identifier = request.getEmail();
+        String rawEmail = request.getEmail();
+        if (rawEmail == null || rawEmail.isBlank()) {
+            throw new IllegalArgumentException("Email không được để trống!");
         }
-        if (identifier == null || identifier.isBlank()) {
-            throw new IllegalArgumentException("Tên đăng nhập không được để trống!");
-        }
-        identifier = identifier.trim().toLowerCase();
 
-        User user = userRepository.findByEmail(identifier)
-                .orElseThrow(() -> new IllegalArgumentException("Tài khoản hoặc mật khẩu không chính xác!"));
+        String email = normalizeEmail(rawEmail);
+        if (!isValidEmail(email)) {
+            throw new IllegalArgumentException("Định dạng email không hợp lệ: " + rawEmail.trim());
+        }
+
+        // Thông báo lỗi chung, tránh hỗ trợ dò quét tài khoản
+        User user = userRepository.findByEmailIgnoreCase(email)
+                .orElseThrow(() -> new IllegalArgumentException("Email hoặc mật khẩu không chính xác!"));
 
         if (!passwordEncoder.matches(request.getPassword(), user.getPasswordHash())) {
-            throw new IllegalArgumentException("Tài khoản hoặc mật khẩu không chính xác!");
+            throw new IllegalArgumentException("Email hoặc mật khẩu không chính xác!");
         }
 
         Wallet wallet = walletRepository.findByUserId(user.getId())
@@ -127,7 +139,7 @@ public class AuthService {
         UserDto userDto = new UserDto(user.getId(), user.getEmail(), user.getFullName(), user.getAvatarUrl(), user.getRole().name(), user.getCreatedAt());
         WalletDto walletDto = new WalletDto(wallet.getId(), wallet.getUserId(), wallet.getBalanceUsd(), wallet.getInitialBalance());
 
-        log.info("USER LOGGED IN | userId={} | username={}", user.getId(), user.getEmail());
+        log.info("USER LOGGED IN | userId={} | email={}", user.getId(), user.getEmail());
 
         return new AuthResponse(token, userDto, walletDto, "Đăng nhập thành công!");
     }
@@ -146,8 +158,8 @@ public class AuthService {
         }
 
         String email = jwtUtil.getEmailFromToken(token);
-        User user = userRepository.findByEmail(email)
-                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy người dùng!"));
+        User user = userRepository.findByEmailIgnoreCase(email)
+                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy thông tin email tài khoản!"));
 
         Wallet wallet = walletRepository.findByUserId(user.getId())
                 .orElseGet(() -> walletRepository.save(new Wallet(user.getId())));

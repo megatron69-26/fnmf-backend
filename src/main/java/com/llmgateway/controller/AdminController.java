@@ -5,6 +5,7 @@ import com.llmgateway.entity.UserRole;
 import com.llmgateway.repository.UserRepository;
 import com.llmgateway.service.AdminService;
 import com.llmgateway.service.AiNewsService;
+import com.llmgateway.service.AuthService;
 import com.llmgateway.util.JwtUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -102,6 +103,9 @@ public class AdminController {
 
         User user = userRepository.findByEmail(email).orElse(null);
         if (user == null) {
+            user = userRepository.findByEmailIgnoreCase(email).orElse(null);
+        }
+        if (user == null) {
             return new AdminAuthResult(HttpStatus.UNAUTHORIZED, null, "User associated with token not found");
         }
 
@@ -112,12 +116,37 @@ public class AdminController {
         return new AdminAuthResult(HttpStatus.OK, user, null);
     }
 
-    private String extractTargetIdentifier(Map<String, Object> body) {
+    private String extractTargetEmailOrId(Map<String, Object> body) {
         if (body == null) return null;
-        Object val = body.containsKey("identifier") ? body.get("identifier") : body.get("email");
+        Object val = body.get("email");
+        if (val == null) val = body.get("userId");
+        if (val == null) val = body.get("identifier");
         if (val == null) return null;
         String s = val.toString().trim();
         return s.isEmpty() ? null : s;
+    }
+
+    @PatchMapping("/users/{userId}/email")
+    public ResponseEntity<Map<String, Object>> updateUserEmail(
+            @RequestHeader(value = "Authorization", required = false) String authHeader,
+            @PathVariable Long userId,
+            @RequestBody Map<String, String> body) {
+        AdminAuthResult auth = verifyAdmin(authHeader);
+        if (!auth.isAuthorized()) return auth.toErrorResponse();
+
+        if (body == null || !body.containsKey("email") || body.get("email") == null) {
+            return ResponseEntity.badRequest().body(Map.of("status", "ERROR", "message", "Email mới không được để trống"));
+        }
+
+        String newEmail = body.get("email");
+        try {
+            Map<String, Object> res = adminService.updateUserEmail(auth.adminUser.getEmail(), userId, newEmail);
+            return ResponseEntity.ok(res);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("status", "ERROR", "message", e.getMessage()));
+        } catch (IllegalStateException e) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("status", "ERROR", "message", e.getMessage()));
+        }
     }
 
     @PostMapping("/topup")
@@ -126,9 +155,9 @@ public class AdminController {
         AdminAuthResult auth = verifyAdmin(authHeader);
         if (!auth.isAuthorized()) return auth.toErrorResponse();
 
-        String identifier = extractTargetIdentifier(body);
-        if (identifier == null) {
-            return ResponseEntity.badRequest().body(Map.of("status", "ERROR", "message", "Tên đăng nhập hoặc email không được để trống"));
+        String target = extractTargetEmailOrId(body);
+        if (target == null) {
+            return ResponseEntity.badRequest().body(Map.of("status", "ERROR", "message", "Email người dùng không được để trống"));
         }
 
         BigDecimal amount;
@@ -139,10 +168,10 @@ public class AdminController {
         }
 
         log.info("ADMIN AUDIT | admin={} | action=TOPUP | target={} | amount={}",
-                auth.adminUser.getEmail(), identifier, amount);
+                auth.adminUser.getEmail(), target, amount);
 
         try {
-            Map<String, Object> res = adminService.topUp(identifier, amount);
+            Map<String, Object> res = adminService.topUp(target, amount);
             return ResponseEntity.ok(res);
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("status", "ERROR", "message", e.getMessage()));
@@ -157,9 +186,9 @@ public class AdminController {
         AdminAuthResult auth = verifyAdmin(authHeader);
         if (!auth.isAuthorized()) return auth.toErrorResponse();
 
-        String identifier = extractTargetIdentifier(body);
-        if (identifier == null) {
-            return ResponseEntity.badRequest().body(Map.of("status", "ERROR", "message", "Tên đăng nhập hoặc email không được để trống"));
+        String target = extractTargetEmailOrId(body);
+        if (target == null) {
+            return ResponseEntity.badRequest().body(Map.of("status", "ERROR", "message", "Email người dùng không được để trống"));
         }
 
         String symbol = body.getOrDefault("symbol", "BTCUSDT").toString().trim().toUpperCase();
@@ -173,10 +202,10 @@ public class AdminController {
         }
 
         log.info("ADMIN AUDIT | admin={} | action=GRANT_CRYPTO | target={} | symbol={} | quantity={} | avgPrice={}",
-                auth.adminUser.getEmail(), identifier, symbol, quantity, avgPrice);
+                auth.adminUser.getEmail(), target, symbol, quantity, avgPrice);
 
         try {
-            Map<String, Object> res = adminService.grantCrypto(identifier, symbol, quantity, avgPrice);
+            Map<String, Object> res = adminService.grantCrypto(target, symbol, quantity, avgPrice);
             return ResponseEntity.ok(res);
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("status", "ERROR", "message", e.getMessage()));
@@ -191,9 +220,9 @@ public class AdminController {
         AdminAuthResult auth = verifyAdmin(authHeader);
         if (!auth.isAuthorized()) return auth.toErrorResponse();
 
-        String identifier = extractTargetIdentifier(body);
-        if (identifier == null) {
-            return ResponseEntity.badRequest().body(Map.of("status", "ERROR", "message", "Tên đăng nhập hoặc email không được để trống"));
+        String target = extractTargetEmailOrId(body);
+        if (target == null) {
+            return ResponseEntity.badRequest().body(Map.of("status", "ERROR", "message", "Email người dùng không được để trống"));
         }
 
         BigDecimal balance;
@@ -204,10 +233,10 @@ public class AdminController {
         }
 
         log.info("ADMIN AUDIT | admin={} | action=SET_BALANCE | target={} | balance={}",
-                auth.adminUser.getEmail(), identifier, balance);
+                auth.adminUser.getEmail(), target, balance);
 
         try {
-            Map<String, Object> res = adminService.setBalance(identifier, balance);
+            Map<String, Object> res = adminService.setBalance(target, balance);
             return ResponseEntity.ok(res);
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("status", "ERROR", "message", e.getMessage()));
@@ -222,15 +251,15 @@ public class AdminController {
         AdminAuthResult auth = verifyAdmin(authHeader);
         if (!auth.isAuthorized()) return auth.toErrorResponse();
 
-        String identifier = extractTargetIdentifier(body);
-        if (identifier == null) {
-            return ResponseEntity.badRequest().body(Map.of("status", "ERROR", "message", "Tên đăng nhập hoặc email không được để trống"));
+        String target = extractTargetEmailOrId(body);
+        if (target == null) {
+            return ResponseEntity.badRequest().body(Map.of("status", "ERROR", "message", "Email người dùng không được để trống"));
         }
 
-        log.info("ADMIN AUDIT | admin={} | action=RESET | target={}", auth.adminUser.getEmail(), identifier);
+        log.info("ADMIN AUDIT | admin={} | action=RESET | target={}", auth.adminUser.getEmail(), target);
 
         try {
-            Map<String, Object> res = adminService.resetAccount(identifier);
+            Map<String, Object> res = adminService.resetAccount(target);
             return ResponseEntity.ok(res);
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("status", "ERROR", "message", e.getMessage()));
@@ -283,6 +312,15 @@ public class AdminController {
         List<Map<String, Object>> users = jdbcTemplate.queryForList(
                 "SELECT id, email, full_name, avatar_url, role, created_at FROM USERS ORDER BY id ASC"
         );
+        for (Map<String, Object> u : users) {
+            Object emailObj = u.get("email");
+            if (emailObj == null) emailObj = u.get("EMAIL");
+            String emailStr = emailObj != null ? emailObj.toString() : "";
+            boolean valid = AuthService.isValidEmail(emailStr);
+            u.put("needsEmailUpdate", !valid);
+            u.put("validEmail", valid);
+        }
+
         List<Map<String, Object>> wallets = jdbcTemplate.queryForList(
                 "SELECT id, user_id, balance_usd, initial_balance, created_at, updated_at FROM WALLETS ORDER BY id ASC"
         );
@@ -298,40 +336,5 @@ public class AdminController {
         res.put("holdings", holdings);
         res.put("transactions", transactions);
         return ResponseEntity.ok(res);
-    }
-
-    @GetMapping("/status")
-    public ResponseEntity<Map<String, Object>> getServerStatus(@RequestHeader(value = "Authorization", required = false) String authHeader) {
-        AdminAuthResult auth = verifyAdmin(authHeader);
-        if (!auth.isAuthorized()) return auth.toErrorResponse();
-
-        Runtime runtime = Runtime.getRuntime();
-        long totalMemory = runtime.totalMemory() / (1024 * 1024);
-        long freeMemory = runtime.freeMemory() / (1024 * 1024);
-        long usedMemory = totalMemory - freeMemory;
-
-        boolean isProd = env != null && Arrays.asList(env.getActiveProfiles()).contains("prod");
-
-        Map<String, Object> res = new HashMap<>();
-        res.put("serverPlatform", isProd ? "Railway Cloud Container (Linux x86_64)" : "Local/Dev Environment");
-        res.put("totalUsers", adminService.getTotalUsers());
-        res.put("usedRamMb", usedMemory + " MB");
-        res.put("freeRamMb", freeMemory + " MB");
-        res.put("totalRamAllocatedMb", totalMemory + " MB");
-        res.put("databaseEngine", isProd ? "PostgreSQL Cloud (Railway)" : "H2 Persistent DB");
-        res.put("uptime", "Running 24/7 Active");
-        return ResponseEntity.ok(res);
-    }
-
-    @GetMapping("/news/diagnostics")
-    public ResponseEntity<Map<String, Object>> getNewsDiagnostics(@RequestHeader(value = "Authorization", required = false) String authHeader) {
-        AdminAuthResult auth = verifyAdmin(authHeader);
-        if (!auth.isAuthorized()) return auth.toErrorResponse();
-
-        Map<String, Object> diag = aiNewsService.getDiagnostics();
-        if (env != null) {
-            diag.put("activeProfiles", env.getActiveProfiles());
-        }
-        return ResponseEntity.ok(diag);
     }
 }

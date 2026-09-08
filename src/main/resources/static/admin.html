@@ -21,7 +21,7 @@
                     <span>🛡️ Đăng nhập tài khoản ADMIN:</span>
                 </div>
                 <div class="auth-inputs">
-                    <input type="text" id="adminEmailInput" placeholder="Tên đăng nhập / Email" autocomplete="off">
+                    <input type="email" id="adminEmailInput" placeholder="Email quản trị" autocomplete="off">
                     <input type="password" id="adminPasswordInput" placeholder="Mật khẩu" autocomplete="off">
                     <button class="btn btn-green btn-sm" id="btnLogin">🔑 Đăng nhập</button>
                 </div>
@@ -75,8 +75,8 @@
             <div class="card">
                 <div class="card-title">💵 NẠP TIỀN VÍ (USD TOP-UP)</div>
                 <div class="input-group">
-                    <label for="topupTarget">Tên đăng nhập / email</label>
-                    <input type="text" id="topupTarget" placeholder="Ví dụ: khoi10 hoặc user@fnmf.com">
+                    <label for="topupTarget">Email người dùng</label>
+                    <input type="text" id="topupTarget" placeholder="Ví dụ: user@fnmf.com">
                 </div>
                 <div class="input-group">
                     <label for="topupAmount">Số tiền nạp ($ USD)</label>
@@ -93,8 +93,8 @@
             <div class="card">
                 <div class="card-title">🪙 CẤP TÀI SẢN (GRANT CRYPTO)</div>
                 <div class="input-group">
-                    <label for="cryptoTarget">Tên đăng nhập / email</label>
-                    <input type="text" id="cryptoTarget" placeholder="Ví dụ: khoi10 hoặc user@fnmf.com">
+                    <label for="cryptoTarget">Email người dùng</label>
+                    <input type="text" id="cryptoTarget" placeholder="Ví dụ: user@fnmf.com">
                 </div>
                 <div class="input-group">
                     <label for="cryptoSymbol">Mã tài sản</label>
@@ -120,8 +120,8 @@
             <div class="card">
                 <div class="card-title">⚙️ ĐẶT SỐ DƯ &amp; RESET TÀI KHOẢN</div>
                 <div class="input-group">
-                    <label for="manageTarget">Tên đăng nhập / email</label>
-                    <input type="text" id="manageTarget" placeholder="Ví dụ: khoi10 hoặc user@fnmf.com">
+                    <label for="manageTarget">Email người dùng</label>
+                    <input type="text" id="manageTarget" placeholder="Ví dụ: user@fnmf.com">
                 </div>
                 <div class="input-group">
                     <label for="customBalance">Đặt số dư tùy ý ($ USD)</label>
@@ -130,6 +130,24 @@
                 <button class="btn btn-blue" id="btnDoSetBalance">💎 Đặt Số Dư Mới</button>
                 <div class="divider"></div>
                 <button class="btn btn-red" id="btnDoReset">🔄 Reset Về $10,000 USD &amp; Xóa Danh Mục</button>
+            </div>
+        </div>
+
+        <!-- Modal Cập Nhật Email Tài Khoản Legacy -->
+        <div id="emailUpdateModal" class="modal-overlay hidden">
+            <div class="modal-card">
+                <div class="modal-title">✉️ CẬP NHẬT EMAIL CHO TÀI KHOẢN</div>
+                <div class="modal-desc">
+                    Tài khoản <strong id="modalOldIdentifier"></strong> hiện chưa có định dạng email hợp lệ. Vui lòng nhập địa chỉ email thực tế để hoàn tất chuyển đổi sang EMAIL-ONLY.
+                </div>
+                <div class="input-group">
+                    <label for="modalNewEmailInput">Email người dùng mới:</label>
+                    <input type="email" id="modalNewEmailInput" placeholder="Ví dụ: user@fnmf.com" autocomplete="off">
+                </div>
+                <div class="modal-actions">
+                    <button class="btn btn-secondary btn-sm" id="btnCancelEmailModal">Hủy bỏ</button>
+                    <button class="btn btn-green btn-sm" id="btnConfirmEmailModal">Xác nhận cập nhật</button>
+                </div>
             </div>
         </div>
 
