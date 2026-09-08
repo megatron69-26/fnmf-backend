@@ -26,4 +26,4 @@ COPY --from=build /app/target/*.jar app.jar
 EXPOSE 8080
 
 # Lệnh khởi động ứng dụng khi container được bật lên
-ENTRYPOINT ["java", "-jar", "app.jar"]
+ENTRYPOINT ["java", "-XX:MaxRAMPercentage=75.0", "-jar", "app.jar"]
