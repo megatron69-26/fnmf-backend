@@ -195,20 +195,29 @@ public class AdminSecurityAndRoleTest {
     }
 
     @Test
-    @DisplayName("6. @JsonAlias('username') cũ với giá trị email hợp lệ vẫn serialize và hoạt động")
+    @DisplayName("6. @JsonAlias('username') cũ deserialize vào email, và serialize chỉ chứa 'email' tuyệt đối không chứa 'username'")
     public void testJsonAliasUsernameWithEmail_deserializesAndWorks() throws Exception {
+        // Deserialization từ legacy client dùng field "username"
         String jsonPayload = "{\"username\":\"legacy.app@fnmf.com\",\"password\":\"secret123\"}";
         LoginRequest loginReq = objectMapper.readValue(jsonPayload, LoginRequest.class);
 
         assertEquals("legacy.app@fnmf.com", loginReq.getEmail());
-        assertEquals("legacy.app@fnmf.com", loginReq.getUsername());
         assertEquals("secret123", loginReq.getPassword());
 
         String regPayload = "{\"username\":\"legacy.reg@fnmf.com\",\"password\":\"secret123\",\"fullName\":\"Legacy User\"}";
         RegisterRequest regReq = objectMapper.readValue(regPayload, RegisterRequest.class);
 
         assertEquals("legacy.reg@fnmf.com", regReq.getEmail());
-        assertEquals("legacy.reg@fnmf.com", regReq.getUsername());
+        assertEquals("Legacy User", regReq.getFullName());
+
+        // Serialization phải chỉ chứa "email", tuyệt đối không chứa "username"
+        String serializedLogin = objectMapper.writeValueAsString(loginReq);
+        assertTrue(serializedLogin.contains("\"email\":\"legacy.app@fnmf.com\""));
+        assertFalse(serializedLogin.contains("\"username\""), "JSON serialize của LoginRequest không được chứa field 'username'");
+
+        String serializedReg = objectMapper.writeValueAsString(regReq);
+        assertTrue(serializedReg.contains("\"email\":\"legacy.reg@fnmf.com\""));
+        assertFalse(serializedReg.contains("\"username\""), "JSON serialize của RegisterRequest không được chứa field 'username'");
     }
 
     @Test

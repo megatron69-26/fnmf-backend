@@ -39,15 +39,6 @@ public class RegisterRequest {
         this.email = email;
     }
 
-    // Tương thích ngược với các client cũ
-    public String getUsername() {
-        return email;
-    }
-
-    public void setUsername(String username) {
-        this.email = username;
-    }
-
     public String getPassword() {
         return password;
     }
