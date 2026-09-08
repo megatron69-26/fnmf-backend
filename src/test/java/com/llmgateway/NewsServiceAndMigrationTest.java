@@ -48,6 +48,8 @@ public class NewsServiceAndMigrationTest {
     private JdbcTemplate jdbcTemplate;
     private ObjectMapper objectMapper;
     private ResourceLoader resourceLoader;
+    private org.springframework.core.env.Environment env;
+    private org.springframework.security.crypto.password.PasswordEncoder passwordEncoder;
 
     @BeforeEach
     public void setUp() {
@@ -59,6 +61,8 @@ public class NewsServiceAndMigrationTest {
         authService = mock(AuthService.class);
         jdbcTemplate = mock(JdbcTemplate.class);
         resourceLoader = mock(ResourceLoader.class);
+        env = mock(org.springframework.core.env.Environment.class);
+        passwordEncoder = mock(org.springframework.security.crypto.password.PasswordEncoder.class);
 
         aiNewsService = new AiNewsService(newsCacheService, newsAiCacheRepository, objectMapper);
         ReflectionTestUtils.setField(aiNewsService, "alphaVantageKey", ""); // Rỗng để luôn dùng CSDL Cache
@@ -72,7 +76,9 @@ public class NewsServiceAndMigrationTest {
                 newsCacheService,
                 jdbcTemplate,
                 objectMapper,
-                resourceLoader
+                resourceLoader,
+                env,
+                passwordEncoder
         );
     }
 

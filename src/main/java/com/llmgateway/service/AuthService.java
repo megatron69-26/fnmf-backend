@@ -75,7 +75,7 @@ public class AuthService {
         if (fullName == null || fullName.isBlank()) {
             fullName = identifier;
         }
-        User user = new User(identifier, hashedPassword, fullName.trim());
+        User user = new User(identifier, hashedPassword, fullName.trim(), com.llmgateway.entity.UserRole.USER);
         user = userRepository.save(user);
 
         // 3. Tự động cấp ví ảo $10,000 vốn ban đầu (Bảng WALLETS)
@@ -87,7 +87,7 @@ public class AuthService {
         // 4. Sinh JWT token cho phiên làm việc
         String token = jwtUtil.generateToken(user.getEmail(), user.getId());
 
-        UserDto userDto = new UserDto(user.getId(), user.getEmail(), user.getFullName(), user.getAvatarUrl(), user.getCreatedAt());
+        UserDto userDto = new UserDto(user.getId(), user.getEmail(), user.getFullName(), user.getAvatarUrl(), user.getRole().name(), user.getCreatedAt());
         WalletDto walletDto = new WalletDto(wallet.getId(), wallet.getUserId(), wallet.getBalanceUsd(), wallet.getInitialBalance());
 
         return new AuthResponse(token, userDto, walletDto, "Đăng ký tài khoản và khởi tạo ví ảo $10,000 thành công!");
@@ -124,7 +124,7 @@ public class AuthService {
                 });
 
         String token = jwtUtil.generateToken(user.getEmail(), user.getId());
-        UserDto userDto = new UserDto(user.getId(), user.getEmail(), user.getFullName(), user.getAvatarUrl(), user.getCreatedAt());
+        UserDto userDto = new UserDto(user.getId(), user.getEmail(), user.getFullName(), user.getAvatarUrl(), user.getRole().name(), user.getCreatedAt());
         WalletDto walletDto = new WalletDto(wallet.getId(), wallet.getUserId(), wallet.getBalanceUsd(), wallet.getInitialBalance());
 
         log.info("USER LOGGED IN | userId={} | username={}", user.getId(), user.getEmail());
@@ -152,7 +152,7 @@ public class AuthService {
         Wallet wallet = walletRepository.findByUserId(user.getId())
                 .orElseGet(() -> walletRepository.save(new Wallet(user.getId())));
 
-        UserDto userDto = new UserDto(user.getId(), user.getEmail(), user.getFullName(), user.getAvatarUrl(), user.getCreatedAt());
+        UserDto userDto = new UserDto(user.getId(), user.getEmail(), user.getFullName(), user.getAvatarUrl(), user.getRole().name(), user.getCreatedAt());
         WalletDto walletDto = new WalletDto(wallet.getId(), wallet.getUserId(), wallet.getBalanceUsd(), wallet.getInitialBalance());
 
         return new AuthResponse(token, userDto, walletDto, "Lấy thông tin tài khoản thành công!");

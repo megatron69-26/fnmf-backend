@@ -31,6 +31,11 @@ public class ProductionSecurityFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {
 
+        // Cấu hình CSP và Security Headers chặt chẽ theo tiêu chuẩn sản xuất
+        response.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+        response.setHeader("X-Content-Type-Options", "nosniff");
+        response.setHeader("Referrer-Policy", "no-referrer");
+
         String path = request.getRequestURI();
 
         if (isBlockedPath(path)) {
@@ -64,12 +69,7 @@ public class ProductionSecurityFilter extends OncePerRequestFilter {
             return true;
         }
 
-        // 4. /admin.html
-        if (normalized.equals("/admin.html") || normalized.endsWith("/admin.html")) {
-            return true;
-        }
-
-        // 5. /api/admin/db/query và mọi path con
+        // 4. /api/admin/db/query và mọi path con (chỉ cho phép dev/local)
         if (normalized.equals("/api/admin/db/query") || normalized.startsWith("/api/admin/db/query/")) {
             return true;
         }

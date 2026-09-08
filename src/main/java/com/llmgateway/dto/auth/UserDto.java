@@ -7,16 +7,22 @@ public class UserDto {
     private String email;
     private String fullName;
     private String avatarUrl;
+    private String role;
     private LocalDateTime createdAt;
 
     public UserDto() {
     }
 
     public UserDto(Long id, String email, String fullName, String avatarUrl, LocalDateTime createdAt) {
+        this(id, email, fullName, avatarUrl, "USER", createdAt);
+    }
+
+    public UserDto(Long id, String email, String fullName, String avatarUrl, String role, LocalDateTime createdAt) {
         this.id = id;
         this.email = email;
         this.fullName = fullName;
         this.avatarUrl = avatarUrl;
+        this.role = role != null ? role : "USER";
         this.createdAt = createdAt;
     }
 
@@ -50,6 +56,14 @@ public class UserDto {
 
     public void setAvatarUrl(String avatarUrl) {
         this.avatarUrl = avatarUrl;
+    }
+
+    public String getRole() {
+        return role != null ? role : "USER";
+    }
+
+    public void setRole(String role) {
+        this.role = role != null ? role : "USER";
     }
 
     public LocalDateTime getCreatedAt() {

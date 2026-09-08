@@ -30,8 +30,8 @@ public class ProductionProfileTest {
                 "/swagger-ui/index.html",
                 "/v3/api-docs",
                 "/v3/api-docs/swagger-config",
-                "/admin.html",
-                "/api/admin/db/query"
+                "/api/admin/db/query",
+                "/api/admin/db/query/test"
         };
 
         for (String path : sensitivePaths) {
@@ -56,7 +56,10 @@ public class ProductionProfileTest {
                 "/actuator/health",
                 "/api/auth/login",
                 "/api/trade/portfolio",
-                "/api/admin/users"
+                "/api/admin/db/overview",
+                "/admin.html",
+                "/admin.css",
+                "/admin.js"
         };
 
         for (String path : allowedPaths) {
@@ -69,6 +72,12 @@ public class ProductionProfileTest {
 
             assertEquals(200, response.getStatus(), "Path should pass through filter: " + path);
             assertFalse(filter.isBlockedPath(path), "isBlockedPath should be false for: " + path);
+
+            // Xác minh CSP và Security Headers
+            assertEquals("nosniff", response.getHeader("X-Content-Type-Options"));
+            assertEquals("no-referrer", response.getHeader("Referrer-Policy"));
+            assertNotNull(response.getHeader("Content-Security-Policy"));
+            assertTrue(response.getHeader("Content-Security-Policy").contains("default-src 'self'"));
         }
     }
 

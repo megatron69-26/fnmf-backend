@@ -2,6 +2,8 @@ package com.llmgateway.entity;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
@@ -28,6 +30,10 @@ public class User {
     @Column(name = "FULL_NAME", nullable = false, length = 255)
     private String fullName;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "ROLE", nullable = false, length = 20)
+    private UserRole role = UserRole.USER;
+
     @Column(name = "AVATAR_URL", length = 500)
     private String avatarUrl;
 
@@ -39,9 +45,14 @@ public class User {
     }
 
     public User(String email, String passwordHash, String fullName) {
+        this(email, passwordHash, fullName, UserRole.USER);
+    }
+
+    public User(String email, String passwordHash, String fullName, UserRole role) {
         this.email = email;
         this.passwordHash = passwordHash;
         this.fullName = fullName;
+        this.role = (role != null) ? role : UserRole.USER;
         this.createdAt = LocalDateTime.now();
     }
 
@@ -92,5 +103,13 @@ public class User {
 
     public void setCreatedAt(LocalDateTime createdAt) {
         this.createdAt = createdAt;
+    }
+
+    public UserRole getRole() {
+        return role != null ? role : UserRole.USER;
+    }
+
+    public void setRole(UserRole role) {
+        this.role = (role != null) ? role : UserRole.USER;
     }
 }

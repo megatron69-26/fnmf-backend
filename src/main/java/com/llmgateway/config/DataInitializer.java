@@ -10,10 +10,12 @@ import com.llmgateway.service.NewsCacheService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.CommandLineRunner;
+import org.springframework.core.env.Environment;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.ResourceLoader;
 import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 
 import java.io.InputStream;
@@ -36,18 +38,24 @@ public class DataInitializer implements CommandLineRunner {
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
     private final ResourceLoader resourceLoader;
+    private final Environment env;
+    private final PasswordEncoder passwordEncoder;
 
     public DataInitializer(UserRepository userRepository, AuthService authService,
                            NewsCacheService newsCacheService,
                            JdbcTemplate jdbcTemplate,
                            ObjectMapper objectMapper,
-                           ResourceLoader resourceLoader) {
+                           ResourceLoader resourceLoader,
+                           Environment env,
+                           PasswordEncoder passwordEncoder) {
         this.userRepository = userRepository;
         this.authService = authService;
         this.newsCacheService = newsCacheService;
         this.jdbcTemplate = jdbcTemplate;
         this.objectMapper = objectMapper;
         this.resourceLoader = resourceLoader;
+        this.env = env;
+        this.passwordEncoder = passwordEncoder;
     }
 
     @Override
@@ -55,10 +63,13 @@ public class DataInitializer implements CommandLineRunner {
         // 1. Kiểm tra an toàn và di chuyển cột OID sang TEXT trên PostgreSQL nếu cần
         migratePostgresLobColumnsIfNeeded();
 
-        // 2. Khởi tạo tài khoản mặc định
-        initializeDefaultUser();
+        // 2. Tự động migrate các user cũ có role null sang USER
+        migrateNullRolesToUser();
 
-        // 3. Nạp seed cache bài báo thật nếu cache đang thiếu dữ liệu
+        // 3. Bootstrap tài khoản admin qua biến môi trường Railway nếu được cấu hình
+        bootstrapAdminIfNeeded();
+
+        // 4. Nạp seed cache bài báo thật nếu cache đang thiếu dữ liệu
         seedNewsCacheIfNeeded();
     }
 
@@ -163,19 +174,68 @@ public class DataInitializer implements CommandLineRunner {
         }
     }
 
-    private void initializeDefaultUser() {
+    public int migrateNullRolesToUser() {
         try {
-            if (userRepository.count() == 0) {
-                log.info(">>> Khởi tạo CSDL tự động: Đang tạo tài khoản mặc định khoi.pro@fnmf.com...");
+            int updated = jdbcTemplate.update("UPDATE USERS SET ROLE = 'USER' WHERE ROLE IS NULL OR TRIM(ROLE) = ''");
+            if (updated > 0) {
+                log.info("ROLE MIGRATION | Đã cập nhật thành công {} user(s) có role null hoặc rỗng sang 'USER'.", updated);
+            } else {
+                log.info("ROLE MIGRATION | Kiểm tra hoàn tất: Toàn bộ user đều đã có role hợp lệ.");
+            }
+            return updated;
+        } catch (Exception e) {
+            log.warn("ROLE MIGRATION | Không thể cập nhật role (có thể bảng USERS chưa tồn tại hoặc DB đang khởi tạo): {}", e.getMessage());
+            return 0;
+        }
+    }
+
+    public void bootstrapAdminIfNeeded() {
+        String enabledVal = env.getProperty("FNMF_ADMIN_BOOTSTRAP_ENABLED");
+        if (enabledVal == null) enabledVal = env.getProperty("fnmf.admin.bootstrap.enabled");
+        boolean enabled = "true".equalsIgnoreCase(enabledVal);
+
+        String email = env.getProperty("FNMF_ADMIN_EMAIL");
+        if (email == null) email = env.getProperty("fnmf.admin.email");
+
+        String password = env.getProperty("FNMF_ADMIN_PASSWORD");
+        if (password == null) password = env.getProperty("fnmf.admin.password");
+
+        if (!enabled) {
+            log.info("ADMIN BOOTSTRAP | Disabled (FNMF_ADMIN_BOOTSTRAP_ENABLED != true), bỏ qua tạo tài khoản admin.");
+            return;
+        }
+
+        if (email == null || email.isBlank() || password == null || password.isBlank()) {
+            log.warn("ADMIN BOOTSTRAP | FNMF_ADMIN_BOOTSTRAP_ENABLED=true nhưng thiếu FNMF_ADMIN_EMAIL hoặc FNMF_ADMIN_PASSWORD.");
+            return;
+        }
+
+        String targetEmail = email.trim();
+        String targetPassword = password.trim();
+
+        try {
+            java.util.Optional<com.llmgateway.entity.User> existingOpt = userRepository.findByEmail(targetEmail);
+            if (existingOpt.isPresent()) {
+                com.llmgateway.entity.User user = existingOpt.get();
+                user.setRole(com.llmgateway.entity.UserRole.ADMIN);
+                user.setPasswordHash(passwordEncoder.encode(targetPassword));
+                userRepository.save(user);
+                log.info("ADMIN BOOTSTRAP | User '{}' đã tồn tại -> đã nâng quyền lên ADMIN và cập nhật mật khẩu an toàn.", targetEmail);
+            } else {
                 RegisterRequest req = new RegisterRequest();
-                req.setFullName("Đặng Đức Khôi");
-                req.setEmail("khoi.pro@fnmf.com");
-                req.setPassword("mypassword123");
+                req.setEmail(targetEmail);
+                req.setPassword(targetPassword);
+                req.setFullName("FNMF Administrator");
                 authService.register(req);
-                log.info(">>> Đã tạo thành công tài khoản 'khoi.pro@fnmf.com' kèm ví $10,000 USD!");
+
+                com.llmgateway.entity.User user = userRepository.findByEmail(targetEmail)
+                        .orElseThrow(() -> new IllegalStateException("Không tìm thấy user vừa tạo"));
+                user.setRole(com.llmgateway.entity.UserRole.ADMIN);
+                userRepository.save(user);
+                log.info("ADMIN BOOTSTRAP | Đã tạo thành công tài khoản ADMIN mới: '{}' kèm ví ban đầu.", targetEmail);
             }
         } catch (Exception e) {
-            log.warn("CSDL đã có dữ liệu hoặc không cần khởi tạo user: {}", e.getMessage());
+            log.error("ADMIN BOOTSTRAP | Lỗi khi khởi tạo tài khoản admin: {}", e.getMessage(), e);
         }
     }
 
