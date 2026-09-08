@@ -44,9 +44,11 @@ import java.util.stream.Collectors;
 public class MobileSyncController {
 
     private final AiNewsService aiNewsService;
+    private final com.llmgateway.service.NewsCacheService newsCacheService;
 
-    public MobileSyncController(AiNewsService aiNewsService) {
+    public MobileSyncController(AiNewsService aiNewsService, com.llmgateway.service.NewsCacheService newsCacheService) {
         this.aiNewsService = aiNewsService;
+        this.newsCacheService = newsCacheService;
     }
 
     /**
@@ -54,14 +56,6 @@ public class MobileSyncController {
      *
      * API chính để Android gọi lấy danh sách tin tức + AI phân tích,
      * trả về format khớp 100% với Room DB của Mạnh.
-     *
-     * Response JSON mẫu:
-     * [
-     *   {
-     *     "news": { "newsId": "NEWS_1", "title": "...", "url": "...", "publishedAt": 1724500000000 },
-     *     "aiAnalysis": { "newsId": "NEWS_1", "summary": "...", "sentiment": "BULLISH", "confidenceScore": 85, "reason": "..." }
-     *   }
-     * ]
      */
     @GetMapping("/sync")
     @Operation(
@@ -72,40 +66,40 @@ public class MobileSyncController {
     )
     public ResponseEntity<List<MobileNewsBundleResponse>> syncNewsForMobile(
             @RequestParam(required = false) String symbol,
-            @RequestParam(defaultValue = "10") int limit) {
+            @RequestParam(defaultValue = "5") int limit) {
 
-        // Bước 1: Lấy dữ liệu từ Oracle DB Cache (cùng nguồn với /api/news/cache)
-        List<NewsAiCache> cachedNews = aiNewsService.getAllCachedNews();
+        int maxLimit = limit > 0 ? limit : 5;
 
-        // Bước 2: Map sang format Room DB của Mạnh
+        // Bước 1: Lấy dữ liệu từ CSDL Cache qua NewsCacheService
+        List<NewsAiCache> cachedNews;
+        if (symbol != null && !symbol.isBlank()) {
+            cachedNews = newsCacheService.findBySymbolOrderByPublishedAtDesc(symbol, maxLimit);
+        } else {
+            cachedNews = newsCacheService.findTopByOrderByPublishedAtDesc(maxLimit);
+        }
+
+        // Bước 2: Nếu cache rỗng, gọi pipeline live feed để nạp dữ liệu mới
+        if (cachedNews.isEmpty()) {
+            aiNewsService.getLiveAiNewsFeed(symbol, maxLimit);
+            if (symbol != null && !symbol.isBlank()) {
+                cachedNews = newsCacheService.findBySymbolOrderByPublishedAtDesc(symbol, maxLimit);
+            } else {
+                cachedNews = newsCacheService.findTopByOrderByPublishedAtDesc(maxLimit);
+            }
+        }
+
+        // Bước 3: Nếu vẫn rỗng cho symbol cụ thể, fallback sang tin thị trường chung (MARKET)
+        if (cachedNews.isEmpty()) {
+            cachedNews = newsCacheService.findTopByOrderByPublishedAtDesc(maxLimit);
+            if (cachedNews.isEmpty()) {
+                cachedNews = newsCacheService.findAll(maxLimit);
+            }
+        }
+
         List<MobileNewsBundleResponse> result = cachedNews.stream()
-                .filter(item -> symbol == null || symbol.isEmpty() ||
-                        (item.getSymbol() != null && item.getSymbol().equalsIgnoreCase(symbol)))
-                .limit(limit)
+                .limit(maxLimit)
                 .map(this::mapToMobileBundle)
                 .collect(Collectors.toList());
-
-        // Nếu cache trống, gọi pipeline live feed để nạp dữ liệu mới
-        if (result.isEmpty()) {
-            List<NewsFeedItemDto> liveFeed = aiNewsService.getLiveAiNewsFeed(symbol, limit);
-            // Sau khi gọi live feed, dữ liệu đã được lưu vào CSDL Cache
-            // Đọc lại cache
-            cachedNews = aiNewsService.getAllCachedNews();
-            result = cachedNews.stream()
-                    .filter(item -> symbol == null || symbol.isEmpty() ||
-                            (item.getSymbol() != null && item.getSymbol().equalsIgnoreCase(symbol)))
-                    .limit(limit)
-                    .map(this::mapToMobileBundle)
-                    .collect(Collectors.toList());
-        }
-
-        // Nếu vẫn trống (do tin bài mang nhãn chung MARKET), lấy tin thị trường chung
-        if (result.isEmpty() && !cachedNews.isEmpty()) {
-            result = cachedNews.stream()
-                    .limit(limit)
-                    .map(this::mapToMobileBundle)
-                    .collect(Collectors.toList());
-        }
 
         return ResponseEntity.ok(result);
     }

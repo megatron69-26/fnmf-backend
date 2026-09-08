@@ -12,6 +12,8 @@ public interface NewsAiCacheRepository extends JpaRepository<NewsAiCache, Long> 
 
     Optional<NewsAiCache> findByArticleUrl(String articleUrl);
 
+    boolean existsByArticleUrl(String articleUrl);
+
     Optional<NewsAiCache> findByTitle(String title);
 
     List<NewsAiCache> findTop10ByOrderByPublishedAtDesc();

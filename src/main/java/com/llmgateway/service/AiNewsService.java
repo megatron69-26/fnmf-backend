@@ -12,7 +12,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.net.URI;
@@ -21,6 +20,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -31,6 +31,7 @@ public class AiNewsService {
 
     private static final Logger log = LoggerFactory.getLogger(AiNewsService.class);
 
+    private final NewsCacheService newsCacheService;
     private final NewsAiCacheRepository newsAiCacheRepository;
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
@@ -50,7 +51,10 @@ public class AiNewsService {
     @Value("${openai.default-model:gemini-2.0-flash}")
     private String geminiModel;
 
-    public AiNewsService(NewsAiCacheRepository newsAiCacheRepository, ObjectMapper objectMapper) {
+    public AiNewsService(NewsCacheService newsCacheService,
+                         NewsAiCacheRepository newsAiCacheRepository,
+                         ObjectMapper objectMapper) {
+        this.newsCacheService = newsCacheService;
         this.newsAiCacheRepository = newsAiCacheRepository;
         this.objectMapper = objectMapper;
         this.httpClient = HttpClient.newBuilder()
@@ -72,7 +76,6 @@ public class AiNewsService {
     //      hoàn toàn KHÔNG tốn chi phí gọi Gemini AI.
     //   3. NẾU LÀ BÀI MỚI: Gọi Gemini AI phân tích 1 lần duy nhất, sau đó tự động lưu vào
     //      Oracle DB để phục vụ cho hàng triệu lượt đọc tiếp theo của các User khác.
-    @Transactional(readOnly = true)
     public List<NewsFeedItemDto> getLiveAiNewsFeed(String symbol, int limit) {
         int maxItems = limit > 0 ? limit : 5;
         List<NewsFeedItemDto> rawNewsList = fetchRealNewsFromAlphaVantage(symbol, maxItems);
@@ -80,13 +83,13 @@ public class AiNewsService {
         if (rawNewsList.isEmpty()) {
             log.info("Alpha Vantage chưa trả bài mới (hoặc chạm rate limit), tự động tải tin bài từ Cache CSDL...");
             List<NewsAiCache> cachedList = (symbol != null && !symbol.isBlank())
-                    ? newsAiCacheRepository.findBySymbolOrderByPublishedAtDesc(symbol.toUpperCase())
-                    : newsAiCacheRepository.findTop10ByOrderByPublishedAtDesc();
+                    ? newsCacheService.findBySymbolOrderByPublishedAtDesc(symbol.toUpperCase(), maxItems)
+                    : newsCacheService.findTopByOrderByPublishedAtDesc(maxItems);
             if (cachedList.isEmpty()) {
-                cachedList = newsAiCacheRepository.findTop10ByOrderByPublishedAtDesc();
+                cachedList = newsCacheService.findTopByOrderByPublishedAtDesc(maxItems);
             }
             if (cachedList.isEmpty()) {
-                cachedList = newsAiCacheRepository.findAll();
+                cachedList = newsCacheService.findAll(maxItems);
             }
             for (NewsAiCache c : cachedList) {
                 NewsFeedItemDto dto = new NewsFeedItemDto();
@@ -113,17 +116,17 @@ public class AiNewsService {
             String url = item.getUrl();
             String title = item.getTitle();
 
-            // 1. Kiểm tra CSDL Oracle trước (Tối ưu chi phí & thời gian phản hồi)
+            // 1. Kiểm tra CSDL trước qua NewsCacheService (Tối ưu chi phí & độ trễ)
             Optional<NewsAiCache> cachedOpt = Optional.empty();
             if (url != null && !url.isBlank()) {
-                cachedOpt = newsAiCacheRepository.findByArticleUrl(url);
+                cachedOpt = newsCacheService.findByArticleUrl(url);
             }
             if (cachedOpt.isEmpty() && title != null) {
-                cachedOpt = newsAiCacheRepository.findByTitle(title);
+                cachedOpt = newsCacheService.findByTitle(title);
             }
 
             if (cachedOpt.isPresent()) {
-                // Đã có trong Oracle DB -> Nạp từ DB trong < 5ms
+                // Đã có trong CSDL Cache -> Nạp từ DB trong < 5ms
                 NewsAiCache cached = cachedOpt.get();
                 item.setAiSummary(parseSummaryPoints(cached.getSummaryPoints()));
                 item.setAiSentiment(cached.getSentiment());
@@ -131,7 +134,7 @@ public class AiNewsService {
                 item.setAiReason(cached.getReason());
                 item.setFromCache(true);
             } else {
-                // Bài báo mới -> Gửi bài báo thật sang Gemini AI để phân tích
+                // Bài báo mới -> Gửi sang Gemini AI phân tích (HTTP call, không giữ DB transaction)
                 NewsAnalysisRequest aiReq = new NewsAnalysisRequest(item.getTitle(), item.getSummary(), symbol, item.getUrl());
                 NewsAnalysisResponse aiRes = analyzeWithGeminiOrHeuristics(aiReq);
 
@@ -141,8 +144,23 @@ public class AiNewsService {
                 item.setAiReason(aiRes.getReason());
                 item.setFromCache(false);
 
-                // Lưu vào Oracle DB cho các lần truy vấn tiếp theo
-                saveToOracleCache(item, symbol);
+                // Lưu vào CSDL Cache qua NewsCacheService độc lập
+                LocalDateTime pubDate = parseAlphaVantageTimestamp(item.getTimePublished());
+                try {
+                    newsCacheService.saveCachedArticle(
+                            item.getUrl(),
+                            item.getTitle(),
+                            symbol,
+                            objectMapper.writeValueAsString(item.getAiSummary()),
+                            item.getAiSentiment(),
+                            BigDecimal.valueOf(item.getAiConfidence() != null ? item.getAiConfidence() : 85),
+                            item.getAiReason(),
+                            pubDate,
+                            LocalDateTime.now()
+                    );
+                } catch (Exception e) {
+                    log.warn("Không thể lưu cache: {}", e.getMessage());
+                }
             }
 
             enrichedList.add(item);
@@ -157,17 +175,16 @@ public class AiNewsService {
     /**
      * Phân tích bài báo bất kỳ (dùng cho trường hợp truyền tay bài báo)
      */
-    @Transactional
     public NewsAnalysisResponse analyzeNews(NewsAnalysisRequest request) {
         String title = request.getTitle().trim();
         String url = request.getArticleUrl() != null ? request.getArticleUrl().trim() : null;
 
         Optional<NewsAiCache> cachedOpt = Optional.empty();
         if (url != null && !url.isBlank()) {
-            cachedOpt = newsAiCacheRepository.findByArticleUrl(url);
+            cachedOpt = newsCacheService.findByArticleUrl(url);
         }
         if (cachedOpt.isEmpty()) {
-            cachedOpt = newsAiCacheRepository.findByTitle(title);
+            cachedOpt = newsCacheService.findByTitle(title);
         }
 
         if (cachedOpt.isPresent()) {
@@ -185,31 +202,29 @@ public class AiNewsService {
 
         NewsAnalysisResponse aiResult = analyzeWithGeminiOrHeuristics(request);
 
-        // Lưu vào Oracle DB
+        // Lưu vào CSDL Cache qua NewsCacheService độc lập
         try {
-            NewsAiCache entity = new NewsAiCache();
-            entity.setTitle(title);
-            entity.setArticleUrl(url != null && !url.isBlank() ? url : "custom_" + System.currentTimeMillis());
-            entity.setSymbol(request.getSymbol() != null ? request.getSymbol().toUpperCase() : "GENERAL");
-            entity.setSummaryPoints(objectMapper.writeValueAsString(aiResult.getSummary()));
-            entity.setSentiment(aiResult.getSentiment());
-            entity.setConfidencePct(BigDecimal.valueOf(aiResult.getConfidence()));
-            entity.setReason(aiResult.getReason());
-            entity.setPublishedAt(LocalDateTime.now());
-            entity.setAnalyzedAt(LocalDateTime.now());
-
-            newsAiCacheRepository.save(entity);
+            newsCacheService.saveCachedArticle(
+                    url != null && !url.isBlank() ? url : "custom_" + System.currentTimeMillis(),
+                    title,
+                    request.getSymbol() != null ? request.getSymbol().toUpperCase() : "GENERAL",
+                    objectMapper.writeValueAsString(aiResult.getSummary()),
+                    aiResult.getSentiment(),
+                    BigDecimal.valueOf(aiResult.getConfidence()),
+                    aiResult.getReason(),
+                    LocalDateTime.now(),
+                    LocalDateTime.now()
+            );
         } catch (Exception e) {
-            log.error("Không thể lưu cache vào Oracle DB: {}", e.getMessage());
+            log.error("Không thể lưu cache: {}", e.getMessage());
         }
 
         aiResult.setFromCache(false);
         return aiResult;
     }
 
-    @Transactional(readOnly = true)
     public List<NewsAiCache> getAllCachedNews() {
-        return newsAiCacheRepository.findAll();
+        return newsCacheService.findAll();
     }
 
     // =========================================================================
@@ -441,25 +456,21 @@ public class AiNewsService {
         return new NewsAnalysisResponse(request.getTitle(), request.getSymbol(), summary, sentiment, confidence, reason, false);
     }
 
-    @Transactional
-    private void saveToOracleCache(NewsFeedItemDto item, String symbol) {
-        try {
-            NewsAiCache entity = new NewsAiCache();
-            entity.setTitle(item.getTitle());
-            entity.setArticleUrl(item.getUrl() != null ? item.getUrl() : "av_" + System.currentTimeMillis());
-            entity.setSymbol(symbol != null ? symbol.toUpperCase() : "MARKET");
-            entity.setSummaryPoints(objectMapper.writeValueAsString(item.getAiSummary()));
-            entity.setSentiment(item.getAiSentiment());
-            entity.setConfidencePct(BigDecimal.valueOf(item.getAiConfidence() != null ? item.getAiConfidence() : 85));
-            entity.setReason(item.getAiReason());
-            entity.setPublishedAt(LocalDateTime.now());
-            entity.setAnalyzedAt(LocalDateTime.now());
-
-            newsAiCacheRepository.save(entity);
-            log.info("LƯU BÀI BÁO THẬT TỪ ALPHA VANTAGE + PHÂN TÍCH AI VÀO CSDL | title='{}' | sentiment={}", item.getTitle(), item.getAiSentiment());
-        } catch (Exception e) {
-            log.warn("Không thể lưu cache: {}", e.getMessage());
+    public LocalDateTime parseAlphaVantageTimestamp(String timePublished) {
+        if (timePublished == null || timePublished.isBlank()) {
+            return null;
         }
+        try {
+            DateTimeFormatter avFormatter = DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss");
+            return LocalDateTime.parse(timePublished, avFormatter);
+        } catch (Exception ignored) {}
+        try {
+            return LocalDateTime.parse(timePublished, DateTimeFormatter.ISO_DATE_TIME);
+        } catch (Exception ignored) {}
+        try {
+            return LocalDateTime.parse(timePublished, DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+        } catch (Exception ignored) {}
+        return null;
     }
 
     private List<String> parseSummaryPoints(String summaryPointsJson) {
@@ -476,7 +487,6 @@ public class AiNewsService {
     /**
      * Chẩn đoán trạng thái hệ thống tin tức & biến môi trường (Tuyệt đối không làm lộ giá trị khóa).
      */
-    @Transactional(readOnly = true)
     public Map<String, Object> getDiagnostics() {
         Map<String, Object> diag = new java.util.LinkedHashMap<>();
 
@@ -529,7 +539,7 @@ public class AiNewsService {
         diag.put("alphaVantage", avReport);
 
         // 3. Kiểm tra CSDL Cache
-        long cacheCount = newsAiCacheRepository.count();
+        long cacheCount = newsCacheService.count();
         diag.put("databaseCacheCount", cacheCount);
 
         return diag;
