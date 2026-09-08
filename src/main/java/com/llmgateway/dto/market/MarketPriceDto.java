@@ -4,19 +4,26 @@ import java.math.BigDecimal;
 
 public class MarketPriceDto {
 
-    private String symbol;       // "BTCUSDT", "XAUUSD", "USOIL", "ETHUSDT"
-    private String name;         // "Bitcoin", "Vàng (Gold)", "Dầu thô (Crude Oil)", "Ethereum"
-    private String category;     // "CRYPTO", "COMMODITY", "FOREX"
+    private String symbol;       // "BTCUSDT", "ETHUSDT", "XAUUSD"
+    private String name;         // "Bitcoin", "Ethereum", "Vàng (Gold Spot)"
+    private String category;     // "CRYPTO", "COMMODITY"
     private BigDecimal price;    // Giá hiện tại
     private BigDecimal change24h; // Tỷ lệ biến động 24h (%)
     private BigDecimal bidPrice; // Giá mua vào
     private BigDecimal askPrice; // Giá bán ra
-    private String lastUpdated;  // Thời gian cập nhật
+    private String lastUpdated;  // Thời gian cập nhật hiển thị
+    private Boolean stale = false; // true nếu lấy từ bộ nhớ đệm khi provider lỗi
+    private String source = "BINANCE"; // "BINANCE", "CACHE_BINANCE"
+    private String fetchedAt;    // Thời điểm truy xuất ISO-8601
 
     public MarketPriceDto() {
     }
 
     public MarketPriceDto(String symbol, String name, String category, BigDecimal price, BigDecimal change24h, BigDecimal bidPrice, BigDecimal askPrice, String lastUpdated) {
+        this(symbol, name, category, price, change24h, bidPrice, askPrice, lastUpdated, false, "BINANCE", lastUpdated);
+    }
+
+    public MarketPriceDto(String symbol, String name, String category, BigDecimal price, BigDecimal change24h, BigDecimal bidPrice, BigDecimal askPrice, String lastUpdated, Boolean stale, String source, String fetchedAt) {
         this.symbol = symbol;
         this.name = name;
         this.category = category;
@@ -25,6 +32,9 @@ public class MarketPriceDto {
         this.bidPrice = bidPrice;
         this.askPrice = askPrice;
         this.lastUpdated = lastUpdated;
+        this.stale = stale != null ? stale : false;
+        this.source = source != null ? source : "BINANCE";
+        this.fetchedAt = fetchedAt != null ? fetchedAt : lastUpdated;
     }
 
     public String getSymbol() {
@@ -89,5 +99,33 @@ public class MarketPriceDto {
 
     public void setLastUpdated(String lastUpdated) {
         this.lastUpdated = lastUpdated;
+    }
+
+    public Boolean isStale() {
+        return stale;
+    }
+
+    public Boolean getStale() {
+        return stale;
+    }
+
+    public void setStale(Boolean stale) {
+        this.stale = stale;
+    }
+
+    public String getSource() {
+        return source;
+    }
+
+    public void setSource(String source) {
+        this.source = source;
+    }
+
+    public String getFetchedAt() {
+        return fetchedAt;
+    }
+
+    public void setFetchedAt(String fetchedAt) {
+        this.fetchedAt = fetchedAt;
     }
 }

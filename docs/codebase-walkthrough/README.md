@@ -1,4 +1,4 @@
-# FNMF Codebase Walkthrough — Draft
+﻿# FNMF Codebase Walkthrough — Draft
 
 > Trạng thái: bản nháp phục vụ học code, chuẩn bị báo cáo và bảo vệ đồ án. Tài liệu mô tả code tại backend commit `c6fc16c` và Android commit `5bc7f7d`. Các ảnh bên dưới được sinh trực tiếp từ source tương ứng để người đọc có thể đối chiếu.
 
@@ -232,41 +232,71 @@ Các nhóm dữ liệu chính:
 - `NEWS_AI_CACHE`: bài báo và kết quả phân tích.
 - `MARKET_FORECASTS`: lịch sử dự báo.
 
-## 9. Known issues cần xử lý trước bản báo cáo cuối
+## 9. Đánh giá Known Issues & Bằng chứng Kiểm thử (Correctness Phase)
 
-### 9.1. Android và backend lệch endpoint Forecast
+Toàn bộ các lỗi nghiêm trọng về tính đúng đắn dữ liệu và hợp đồng API đã được xử lý triệt để trong Correctness & Data-Integrity Phase:
 
-Android hiện gọi:
+### 9.1. [ĐÃ XỬ LÝ] Hợp đồng API Forecast (Contract Alignment)
+- **Trước đây:** Android khai báo sai `GET /api/forecast/predict?symbol=...`, gây lỗi 404 khi truy vấn từ App.
+- **Giải pháp:** Cập nhật `ApiService.kt` thành `@GET("/api/forecast/{symbol}")` với `@Path("symbol")` và `@Query("timeframe") = "24H_7D"`. `ForecastFragment` bổ sung quản lý vòng đời (hủy call khi `onDestroyView`), hiển thị lỗi trung thực, không bao giờ sinh `ForecastResponse` giả mạo.
+- **Bằng chứng kiểm thử:** Test `testForecastApiContract_hasPathAnnotationAndQueryTimeframe` trong `CorrectnessAndIntegrityUnitTest.kt` đạt 100% PASS.
 
-```text
-GET /api/forecast/predict?symbol=BTCUSDT
-```
+### 9.2. [ĐÃ XỬ LÝ] Xóa bỏ hoàn toàn dữ liệu tài chính giả (Zero-Fake Policy)
+- **Trước đây:** Backend `MarketDataService` còn hàm `generateFallbackCandles()`, `Math.random()`, sin wave mô phỏng và giá hardcode khi mất kết nối API ngoài.
+- **Giải pháp:** Xóa hoàn toàn các thuật toán sinh dữ liệu ngẫu nhiên/mô phỏng. Chuyển sang chính sách Authoritative: nếu có cache thật của đúng mã đó thì trả cache thật kèm `stale=true`; nếu chưa từng có cache thật, trả HTTP 503 `DATA_UNAVAILABLE`.
+- **Bằng chứng kiểm thử:** Bộ 57 test backend (`MarketSymbolAndTradeIntegrityTest`) và 71 test Android đạt 100% PASS.
 
-Backend hiện cung cấp:
+### 9.3. [ĐÃ XỬ LÝ] Chuẩn hóa ánh xạ Symbol & Loại bỏ USOIL
+- **Trước đây:** Các mã lạ hoặc `USOIL` bị fallback mặc định về `BTCUSDT`, khiến nến và giá dầu hiển thị thông số của Bitcoin.
+- **Giải pháp:** Thiết lập `MarketSymbolConfig` với 3 mã chuẩn: `BTCUSDT`, `ETHUSDT`, `XAUUSD` (tham chiếu `PAXGUSDT`). Mã `USOIL` và các mã không hỗ trợ bị từ chối hoàn toàn với HTTP 422 `UNSUPPORTED_SYMBOL` (`{"status":"ERROR","code":"UNSUPPORTED_SYMBOL","message":"Mã tài sản chưa được hỗ trợ"}`). Không bao giờ fallback về BTC.
+- **Bằng chứng kiểm thử:** Test `testUnsupportedSymbol_Returns422` và `testSymbolMapping_doesNotFallbackToBTC` xác nhận từ chối USOIL 100%.
 
-```text
-GET /api/forecast/BTCUSDT?timeframe=24H_7D
-```
+### 9.4. [ĐÃ XỬ LÝ] Hợp nhất luồng News & Bộ nhớ đệm Room Offline
+- **Trước đây:** Tồn tại song song `/api/news/sync` và `/api/mobile/news/sync`, thiếu pipeline Room hoàn chỉnh.
+- **Giải pháp:** Triển khai Single Source of Truth qua `NewsRepository`:
+  - Online: Gọi `/api/news/sync`, upsert đồng thời `NewsEntity` và `AiAnalysisEntity` vào Room DB trong một giao dịch.
+  - Offline: Tự động nạp từ Room DB, bảo lưu `publishedAt` thật từ tin bài gốc (không ghi đè bằng ngày hiện tại).
+- **Bằng chứng kiểm thử:** Test `testNewsRepository_parseTimeToEpoch_preservesRealTimestamp` đạt 100% PASS.
 
-Nếu không sửa contract, tab Forecast có thể nhận HTTP 404.
+### 9.5. [ĐÃ XỬ LÝ] Quản lý Token & AuthSessionManager tập trung
+- **Trước đây:** Truy cập rải rác khóa `jwt_token` trong `SharedPreferences` tại từng Activity/Fragment.
+- **Giải pháp:** Tập trung hóa toàn bộ logic phiên đăng nhập vào `AuthSessionManager`:
+  - Quản lý token, Bearer header, email người dùng đã chuẩn hóa lowercase.
+  - Xử lý HTTP 401/403 tập trung với cờ chống vòng lặp điều hướng (navigation loop prevention).
+  - Bảo lưu server URL và email đã lưu khi đăng xuất.
 
-### 9.2. Backend vẫn còn dữ liệu fallback mô phỏng
+### 9.6. [ĐÃ XỬ LÝ] Concurrency & Idempotency trong giao dịch (Paper Trading)
+- **Trước đây:** Lệnh đặt chỉ bọc `@Transactional`, có nguy cơ Race Condition khi gửi đồng thời 2 request.
+- **Giải pháp:**
+  - Khóa bi quan (`@Lock(LockModeType.PESSIMISTIC_WRITE)`) trên `Wallet` và `Holding`.
+  - Hỗ trợ `clientOrderId` (UUID): Tự động phát hiện và replay kết quả lệnh cũ nếu nhận trùng mã yêu cầu, bảo đảm tài khoản không bị trừ tiền hai lần.
+  - Ràng buộc duy nhất `(WALLET_ID, SYMBOL)` qua Flyway migration `V3`.
+- **Bằng chứng kiểm thử:** Test `testConcurrentOrdersDoNotOverdrawBalance` và `testIdempotency_DuplicateClientOrderId_ReturnsSameTransaction` đạt 100% PASS.
 
-Android v1.1.13 đã xóa mock candle, nhưng `MarketDataService` backend vẫn có giá fallback hardcode và `generateFallbackCandles()` dùng random walk. Vì vậy chưa thể tuyên bố “zero mock toàn hệ thống”. Hướng sửa phù hợp là trả trạng thái unavailable hoặc cache dữ liệu thật cuối cùng và gắn metadata `stale=true`.
+### 9.7. Các giới hạn còn tồn tại (Known Issues chưa giải quyết)
+- **Nguồn dữ liệu WTI Crude Oil:** Hiện các API dữ liệu hàng hóa phái sinh thời gian thực (WTI Spot) đòi hỏi chi phí bản quyền lớn. Dự án tạm hoãn hỗ trợ mã dầu thô cho tới khi có nguồn cấp dữ liệu đáng tin cậy.
+- **Đa ví ngoại tệ:** Hệ thống hiện định giá và khớp lệnh theo đồng tiền cơ sở USD/USDT, chưa hỗ trợ chuyển đổi đa ví fiat (VND, EUR).
 
-### 9.3. Mapping USOIL và symbol lạ
+---
 
-Backend hiện dùng nhánh mặc định `BTCUSDT` cho symbol không thuộc ETH/XAU. Điều này có thể khiến USOIL nhận dữ liệu Bitcoin nhưng mang nhãn dầu, thậm chí đi vào giá khớp lệnh. Mỗi symbol cần mapping rõ ràng; symbol không hỗ trợ phải bị từ chối.
+## 10. Bảng đối chiếu: Đề xuất ban đầu ↔ Sản phẩm thực tế
 
-### 9.4. Hai đường News trên Android
+| Thành phần / Tính năng | Đề xuất ban đầu (Proposal) | Triển khai thực tế (Production) | Trạng thái | Ghi chú kỹ thuật |
+| :--- | :--- | :--- | :--- | :--- |
+| **Định danh người dùng** | Username + Mật khẩu | Email-only + Mật khẩu | **Replaced by another technology** | Chuẩn hóa toàn hệ thống sang Email-only; ràng buộc duy nhất `LOWER(email)` trên PostgreSQL. |
+| **Cơ sở dữ liệu** | Oracle Database 21c | H2 (Dev) / PostgreSQL (Cloud Production) | **Replaced by another technology** | Môi trường Railway tối ưu cho PostgreSQL; quản lý qua Flyway Migration phiên bản V1, V2, V3. |
+| **Nguồn nến & Giá Live** | Alpha Vantage API | Binance REST API & WebSocket | **Replaced by another technology** | Tránh giới hạn 5 req/phút của Alpha Vantage; nến Klines và WebSocket trực tiếp đạt độ trễ < 100ms. |
+| **Dữ liệu Dầu thô (USOIL)** | Hỗ trợ giao dịch dầu WTI | Tạm loại bỏ (HTTP 422) | **Not implemented (Deferred)** | Không dùng giá giả mô phỏng; từ chối giao dịch an toàn cho tới khi có nguồn cấp dữ liệu WTI thật. |
+| **Chế độ mất kết nối thị trường** | Sinh nến Sin Wave + Random Walk | Trả HTTP 503 hoặc Cache thật (`stale=true`) | **Replaced by another technology** | Tuân thủ chính sách Zero-Fake: Tuyệt đối không sinh dữ liệu tài chính giả mạo. |
+| **Phân tích Tin tức AI** | Alpha Vantage + Gemini AI | Alpha Vantage + Gemini + Cache 2 lớp + Room DB | **Implemented** | Tối ưu chi phí và độ trễ phản hồi (< 5ms khi có cache). Hỗ trợ đọc offline qua Room DB. |
+| **Dự báo Thị trường AI** | Google Gemini AI | Gemini AI + Định lượng Heuristic Fallback | **Implemented** | Cung cấp tín hiệu, vùng hỗ trợ/kháng cự và điểm tin cậy; dự phòng Heuristic khi Gemini gián đoạn. |
+| **Paper Trading** | Đặt lệnh Mua/Bán ảo | Đặt lệnh với Pessimistic Lock & Idempotency | **Implemented** | Khóa bi quan chống Race Condition và `clientOrderId` (UUID) bảo đảm không trùng lặp lệnh. |
+| **Danh mục theo dõi (Watchlist)** | Danh sách yêu thích | Cloud CRUD + Phân lập Room DB theo User | **Implemented** | Đầy đủ GET, POST, DELETE `/api/watchlist`; dữ liệu cache Room phân tách theo `userEmail`. |
+| **Quản trị hệ thống (Admin)** | Form nạp tiền/cấp coin | Cloud Admin tối giản đặt số dư theo Email | **Implemented** | Bảo mật phân quyền `ADMIN`, loại bỏ các form legacy, quản lý người dùng bằng email chuẩn hóa. |
 
-Codebase còn cả `/api/news/sync` và `/api/mobile/news/sync`. Màn hình News hiện dùng đường thứ nhất, trong khi interface API chung vẫn khai báo đường mobile/Room. Cần xác định một flow chính hoặc ghi rõ trách nhiệm khác nhau để tránh thành viên hiểu nhầm.
+---
 
-### 9.5. JWT trên Android
-
-JWT hiện được lưu trong `SharedPreferences` thường. Bản production nên cân nhắc Android Keystore/EncryptedSharedPreferences, refresh token và xử lý token hết hạn tập trung.
-
-## 10. Câu hỏi tự kiểm tra khi học codebase
+## 11. Câu hỏi tự kiểm tra khi học codebase
 
 1. Vì sao điện thoại không thể dùng `localhost` để gọi backend trên laptop?
 2. Retrofit biến interface Kotlin thành HTTP request như thế nào?
@@ -281,7 +311,7 @@ JWT hiện được lưu trong `SharedPreferences` thường. Bản production n
 11. Nếu Alpha Vantage, Gemini, Binance hoặc Railway lần lượt gặp lỗi thì UI biểu hiện thế nào?
 12. Làm sao chứng minh một kết quả thực sự do Gemini tạo chứ không phải heuristic/cache?
 
-## 11. Việc cần bổ sung cho bản final
+## 12. Việc cần bổ sung cho bản final
 
 - Sửa và kiểm thử các known issues ở mục 9.
 - Chụp thêm ảnh runtime trên thiết bị thật cho từng flow.

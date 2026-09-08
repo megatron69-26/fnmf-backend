@@ -8,12 +8,15 @@ import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "HOLDINGS")
+@Table(name = "HOLDINGS", uniqueConstraints = {
+        @UniqueConstraint(name = "uk_holding_wallet_symbol", columnNames = {"WALLET_ID", "SYMBOL"})
+})
 public class Holding {
 
     @Id

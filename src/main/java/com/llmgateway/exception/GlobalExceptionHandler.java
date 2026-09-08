@@ -50,6 +50,45 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * Unsupported / rejected symbol (e.g. USOIL or non-existent symbols).
+     */
+    @ExceptionHandler(UnsupportedSymbolException.class)
+    public ResponseEntity<Map<String, Object>> handleUnsupportedSymbol(UnsupportedSymbolException ex) {
+        return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY).body(Map.of(
+                "status", "ERROR",
+                "code", "UNSUPPORTED_SYMBOL",
+                "message", ex.getMessage() != null ? ex.getMessage() : "Mã tài sản chưa được hỗ trợ",
+                "timestamp", Instant.now().toString()
+        ));
+    }
+
+    /**
+     * Provider unavailable without cached fallback.
+     */
+    @ExceptionHandler(MarketDataUnavailableException.class)
+    public ResponseEntity<Map<String, Object>> handleMarketDataUnavailable(MarketDataUnavailableException ex) {
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(Map.of(
+                "status", "ERROR",
+                "code", "DATA_UNAVAILABLE",
+                "message", ex.getMessage() != null ? ex.getMessage() : "Dữ liệu thị trường tạm thời không khả dụng",
+                "timestamp", Instant.now().toString()
+        ));
+    }
+
+    /**
+     * Idempotency conflict (cùng key nhưng payload khác nhau).
+     */
+    @ExceptionHandler(IdempotencyConflictException.class)
+    public ResponseEntity<Map<String, Object>> handleIdempotencyConflict(IdempotencyConflictException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of(
+                "status", "ERROR",
+                "code", "IDEMPOTENCY_CONFLICT",
+                "message", ex.getMessage() != null ? ex.getMessage() : "Idempotency key reused with different payload",
+                "timestamp", Instant.now().toString()
+        ));
+    }
+
+    /**
      * Mọi RuntimeException khác (bao gồm lỗi từ OpenAI API).
      */
     @ExceptionHandler(RuntimeException.class)

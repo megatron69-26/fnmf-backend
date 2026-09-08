@@ -59,7 +59,12 @@ public class WatchlistService {
         List<WatchlistItemDto> result = new ArrayList<>();
 
         for (Watchlist w : items) {
-            MarketPriceDto priceDto = marketDataService.getPriceBySymbol(w.getSymbol());
+            MarketPriceDto priceDto = null;
+            try {
+                priceDto = marketDataService.getPriceBySymbol(w.getSymbol());
+            } catch (Exception e) {
+                log.warn("Không thể nạp giá cho mã trong watchlist: {} ({})", w.getSymbol(), e.getMessage());
+            }
             result.add(new WatchlistItemDto(
                     w.getId(),
                     w.getSymbol(),
@@ -116,7 +121,8 @@ public class WatchlistService {
      */
     @Transactional
     public WatchlistItemDto addToWatchlist(Long userId, WatchlistRequest request) {
-        String cleanSymbol = request.getSymbol().trim().toUpperCase();
+        com.llmgateway.config.MarketSymbolConfig.validateSupported(request.getSymbol());
+        String cleanSymbol = com.llmgateway.config.MarketSymbolConfig.getCanonicalSymbol(request.getSymbol());
 
         Optional<Watchlist> existing = watchlistRepository.findByUserIdAndSymbol(userId, cleanSymbol);
         if (existing.isPresent()) {

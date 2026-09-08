@@ -98,7 +98,7 @@ public class WatchlistController {
             token = token.substring(1, token.length() - 1).trim();
         }
         if (!jwtUtil.validateToken(token)) {
-            log.warn("Token không hợp lệ: '{}'", token);
+            log.warn("Xác thực Bearer token thất bại hoặc token đã hết hạn");
             throw new IllegalArgumentException("Token không hợp lệ hoặc đã hết hạn! Vui lòng đăng nhập lại để lấy token mới.");
         }
         Long userId = jwtUtil.getUserIdFromToken(token);

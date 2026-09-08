@@ -11,8 +11,12 @@ import jakarta.persistence.Table;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
+import jakarta.persistence.UniqueConstraint;
+
 @Entity
-@Table(name = "TRANSACTIONS")
+@Table(name = "TRANSACTIONS", uniqueConstraints = {
+        @UniqueConstraint(name = "uk_transactions_wallet_client_order_id", columnNames = {"WALLET_ID", "CLIENT_ORDER_ID"})
+})
 public class Transaction {
 
     @Id
@@ -37,6 +41,9 @@ public class Transaction {
     @Column(name = "TOTAL_AMOUNT", nullable = false, precision = 18, scale = 4)
     private BigDecimal totalAmount;
 
+    @Column(name = "CLIENT_ORDER_ID", length = 64)
+    private String clientOrderId;
+
     @Column(name = "CREATED_AT", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
@@ -51,12 +58,17 @@ public class Transaction {
     }
 
     public Transaction(Long walletId, String symbol, String type, BigDecimal price, BigDecimal quantity, BigDecimal totalAmount) {
+        this(walletId, symbol, type, price, quantity, totalAmount, null);
+    }
+
+    public Transaction(Long walletId, String symbol, String type, BigDecimal price, BigDecimal quantity, BigDecimal totalAmount, String clientOrderId) {
         this.walletId = walletId;
         this.symbol = symbol;
         this.type = type;
         this.price = price;
         this.quantity = quantity;
         this.totalAmount = totalAmount;
+        this.clientOrderId = clientOrderId;
         this.createdAt = LocalDateTime.now();
     }
 
@@ -114,6 +126,14 @@ public class Transaction {
 
     public void setTotalAmount(BigDecimal totalAmount) {
         this.totalAmount = totalAmount;
+    }
+
+    public String getClientOrderId() {
+        return clientOrderId;
+    }
+
+    public void setClientOrderId(String clientOrderId) {
+        this.clientOrderId = clientOrderId;
     }
 
     public LocalDateTime getCreatedAt() {
