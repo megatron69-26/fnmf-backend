@@ -141,11 +141,24 @@
             // Xóa mật khẩu khỏi input form ngay sau khi đăng nhập
             adminPasswordInput.value = '';
 
-            // Xác minh quyền ADMIN bằng cách gọi endpoint admin overview
-            logMessage('Đang kiểm tra quyền ADMIN trên hệ thống...', 'info');
-            await loadDbOverview(true);
+            // Xác minh quyền ADMIN và tải dữ liệu tổng quan
+            logMessage('Đang kiểm tra quyền ADMIN và tải dữ liệu...', 'info');
+            try {
+                await loadDbOverview(true);
+            } catch (overviewErr) {
+                // Đăng nhập auth thành công nhưng overview thất bại
+                stopAutoRefresh();
+                authToken = null;
+                currentAdminEmail = null;
+                cachedDbData = null;
+                renderEmptyState('Không thể tải dữ liệu quản trị từ máy chủ.');
+                const errMsg = 'Đăng nhập thành công nhưng không tải được dữ liệu quản trị';
+                logMessage('❌ ' + errMsg + ': ' + overviewErr.message, 'err');
+                showBanner(errMsg, 'error');
+                return;
+            }
 
-            // Thành công -> chuyển giao diện sang trạng thái Logged In
+            // Chỉ chuyển giao diện sang trạng thái Logged In khi overview thành công
             authLoggedOut.classList.add('hidden');
             authLoggedIn.classList.remove('hidden');
             authEmailDisplay.textContent = currentAdminEmail;
@@ -157,6 +170,7 @@
         } catch (e) {
             authToken = null;
             currentAdminEmail = null;
+            stopAutoRefresh();
             logMessage('❌ ' + e.message, 'err');
             showBanner(e.message, 'error');
         } finally {
@@ -191,10 +205,14 @@
         try {
             const res = await apiFetch('/api/admin/db/overview', { method: 'GET' });
             if (!res.ok) {
-                throw new Error('Lỗi nạp dữ liệu (HTTP ' + res.status + ')');
+                const errData = await res.json().catch(() => ({}));
+                throw new Error(errData.message || ('Lỗi nạp dữ liệu (HTTP ' + res.status + ')'));
             }
 
             const data = await res.json();
+            if (data.status === 'ERROR') {
+                throw new Error(data.message || 'Lỗi nạp dữ liệu quản trị');
+            }
             cachedDbData = data;
             renderCurrentTable();
 
@@ -207,6 +225,7 @@
             }
         } catch (e) {
             logMessage('Không thể nạp dữ liệu overview: ' + e.message, 'err');
+            throw e;
         } finally {
             isFetchingOverview = false;
             if (btnManualRefresh) btnManualRefresh.disabled = false;
@@ -460,7 +479,7 @@
         autoRefreshTimer = setInterval(() => {
             if (document.visibilityState === 'hidden') return;
             if (authToken) {
-                loadDbOverview(false);
+                loadDbOverview(false).catch(() => {});
             }
         }, 5000);
     }
@@ -484,7 +503,11 @@
 
         btnLogout.addEventListener('click', logout);
 
-        btnManualRefresh.addEventListener('click', () => loadDbOverview(true));
+        btnManualRefresh.addEventListener('click', () => {
+            loadDbOverview(true).catch(e => {
+                showBanner(e.message, 'error');
+            });
+        });
 
         autoRefreshToggle.addEventListener('change', (e) => {
             if (e.target.checked) {
@@ -496,7 +519,7 @@
 
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'visible' && authToken && autoRefreshToggle.checked) {
-                loadDbOverview(false);
+                loadDbOverview(false).catch(() => {});
             }
         });
 

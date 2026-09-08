@@ -244,32 +244,43 @@ public class AdminController {
         if (!auth.isAuthorized()) return auth.toErrorResponse();
 
         Map<String, Object> res = new HashMap<>();
-        List<Map<String, Object>> users = jdbcTemplate.queryForList(
-                "SELECT id, email, full_name, avatar_url, role, created_at FROM USERS ORDER BY id ASC"
-        );
-        for (Map<String, Object> u : users) {
-            Object emailObj = u.get("email");
-            if (emailObj == null) emailObj = u.get("EMAIL");
-            String emailStr = emailObj != null ? emailObj.toString() : "";
-            boolean valid = AuthService.isValidEmail(emailStr);
-            u.put("needsEmailUpdate", !valid);
-            u.put("validEmail", valid);
+        try {
+            List<Map<String, Object>> rawUsers = jdbcTemplate.queryForList(
+                    "SELECT id, email, full_name, avatar_url, role, created_at FROM USERS ORDER BY id ASC"
+            );
+            List<Map<String, Object>> users = new java.util.ArrayList<>();
+            for (Map<String, Object> u : rawUsers) {
+                Map<String, Object> userMap = new HashMap<>(u);
+                Object emailObj = userMap.get("email");
+                if (emailObj == null) emailObj = userMap.get("EMAIL");
+                String emailStr = emailObj != null ? emailObj.toString() : "";
+                boolean valid = AuthService.isValidEmail(emailStr);
+                userMap.put("needsEmailUpdate", !valid);
+                userMap.put("validEmail", valid);
+                users.add(userMap);
+            }
+
+            List<Map<String, Object>> wallets = jdbcTemplate.queryForList(
+                    "SELECT id, user_id, balance_usd, initial_balance, created_at, updated_at FROM WALLETS ORDER BY id ASC"
+            );
+
+            res.put("users", users);
+            res.put("wallets", wallets);
+            return ResponseEntity.ok(res);
+        } catch (org.springframework.dao.DataAccessException e) {
+            log.error("ADMIN DATABASE OVERVIEW FAILED | admin={} | error={}",
+                    auth.adminUser.getEmail(), e.getMessage());
+            Map<String, Object> err = new HashMap<>();
+            err.put("status", "ERROR");
+            err.put("message", "Không thể tải dữ liệu quản trị");
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(err);
+        } catch (Exception e) {
+            log.error("ADMIN DATABASE OVERVIEW UNEXPECTED ERROR | admin={} | error={}",
+                    auth.adminUser.getEmail(), e.getMessage());
+            Map<String, Object> err = new HashMap<>();
+            err.put("status", "ERROR");
+            err.put("message", "Không thể tải dữ liệu quản trị");
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(err);
         }
-
-        List<Map<String, Object>> wallets = jdbcTemplate.queryForList(
-                "SELECT id, user_id, balance_usd, initial_balance, created_at, updated_at FROM WALLETS ORDER BY id ASC"
-        );
-        List<Map<String, Object>> holdings = jdbcTemplate.queryForList(
-                "SELECT id, wallet_id, symbol, quantity, avg_buy_price, created_at, updated_at FROM HOLDINGS ORDER BY id ASC"
-        );
-        List<Map<String, Object>> transactions = jdbcTemplate.queryForList(
-                "SELECT id, wallet_id, symbol, type, price, quantity, total_amount, created_at FROM TRANSACTIONS ORDER BY created_at DESC"
-        );
-
-        res.put("users", users);
-        res.put("wallets", wallets);
-        res.put("holdings", holdings);
-        res.put("transactions", transactions);
-        return ResponseEntity.ok(res);
     }
 }

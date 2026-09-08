@@ -771,4 +771,128 @@ public class AdminSecurityAndRoleTest {
         assertTrue(js.contains("confirmBalanceUpdate"));
         assertTrue(js.contains("/api/admin/set-balance"));
     }
+
+    @Test
+    @DisplayName("25. Overview chỉ truy vấn USERS và WALLETS, không chứa holdings/transactions, ADMIN nhận 200")
+    public void testOverview_adminValid_returns200_onlyUsersAndWallets() {
+        String token = "admin.overview.token";
+        when(jwtUtil.validateToken(token)).thenReturn(true);
+        when(jwtUtil.getEmailFromToken(token)).thenReturn("admin@fnmf.com");
+
+        User admin = new User("admin@fnmf.com", "hash", "Admin", UserRole.ADMIN);
+        when(userRepository.findByEmail("admin@fnmf.com")).thenReturn(Optional.of(admin));
+
+        Map<String, Object> userRow = Map.of("id", 1L, "email", "trader@fnmf.com", "role", "USER");
+        Map<String, Object> walletRow = Map.of("id", 10L, "user_id", 1L, "balance_usd", new BigDecimal("10000.0000"));
+
+        when(jdbcTemplate.queryForList(contains("FROM USERS"))).thenReturn(List.of(userRow));
+        when(jdbcTemplate.queryForList(contains("FROM WALLETS"))).thenReturn(List.of(walletRow));
+
+        ResponseEntity<Map<String, Object>> response = adminController.getDatabaseOverview("Bearer " + token);
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertNotNull(response.getBody());
+
+        // Phải có users và wallets
+        assertTrue(response.getBody().containsKey("users"));
+        assertTrue(response.getBody().containsKey("wallets"));
+
+        // Tuyệt đối không chứa holdings hoặc transactions
+        assertFalse(response.getBody().containsKey("holdings"), "Response không được chứa key 'holdings'");
+        assertFalse(response.getBody().containsKey("transactions"), "Response không được chứa key 'transactions'");
+
+        // Xác minh chỉ gọi query 2 bảng USERS và WALLETS
+        verify(jdbcTemplate, times(1)).queryForList(contains("FROM USERS"));
+        verify(jdbcTemplate, times(1)).queryForList(contains("FROM WALLETS"));
+        verify(jdbcTemplate, never()).queryForList(contains("FROM HOLDINGS"));
+        verify(jdbcTemplate, never()).queryForList(contains("FROM TRANSACTIONS"));
+    }
+
+    @Test
+    @DisplayName("26. Overview: thiếu token nhận 401, USER thường nhận 403")
+    public void testOverview_securityAuth_missingToken401_normalUser403() {
+        // 1. Thiếu token -> 401
+        ResponseEntity<Map<String, Object>> resNoToken = adminController.getDatabaseOverview(null);
+        assertEquals(HttpStatus.UNAUTHORIZED, resNoToken.getStatusCode());
+
+        // 2. Token không hợp lệ -> 401
+        when(jwtUtil.validateToken("invalid.token")).thenReturn(false);
+        ResponseEntity<Map<String, Object>> resInvalid = adminController.getDatabaseOverview("Bearer invalid.token");
+        assertEquals(HttpStatus.UNAUTHORIZED, resInvalid.getStatusCode());
+
+        // 3. User thường (ROLE = USER) -> 403
+        String userToken = "user.normal.token";
+        when(jwtUtil.validateToken(userToken)).thenReturn(true);
+        when(jwtUtil.getEmailFromToken(userToken)).thenReturn("trader@fnmf.com");
+
+        User normalUser = new User("trader@fnmf.com", "hash", "Trader", UserRole.USER);
+        when(userRepository.findByEmail("trader@fnmf.com")).thenReturn(Optional.of(normalUser));
+
+        ResponseEntity<Map<String, Object>> resForbidden = adminController.getDatabaseOverview("Bearer " + userToken);
+        assertEquals(HttpStatus.FORBIDDEN, resForbidden.getStatusCode());
+    }
+
+    @Test
+    @DisplayName("27. Lỗi JDBC trong overview nhận HTTP 500 với message an toàn, không lộ SQL hay table")
+    public void testOverview_jdbcError_returns500_safeMessage() {
+        String token = "admin.error.token";
+        when(jwtUtil.validateToken(token)).thenReturn(true);
+        when(jwtUtil.getEmailFromToken(token)).thenReturn("admin@fnmf.com");
+
+        User admin = new User("admin@fnmf.com", "hash", "Admin", UserRole.ADMIN);
+        when(userRepository.findByEmail("admin@fnmf.com")).thenReturn(Optional.of(admin));
+
+        // Giả lập lỗi truy vấn database (ví dụ: column does not exist)
+        when(jdbcTemplate.queryForList(contains("FROM USERS")))
+                .thenThrow(new org.springframework.dao.DataRetrievalFailureException("column created_at does not exist in table HOLDINGS"));
+
+        ResponseEntity<Map<String, Object>> response = adminController.getDatabaseOverview("Bearer " + token);
+
+        assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, response.getStatusCode());
+        assertNotNull(response.getBody());
+        assertEquals("ERROR", response.getBody().get("status"));
+        assertEquals("Không thể tải dữ liệu quản trị", response.getBody().get("message"));
+
+        // Không gửi raw SQL exception hoặc thông tin database ra client
+        String respJson = response.getBody().toString();
+        assertFalse(respJson.contains("HOLDINGS"));
+        assertFalse(respJson.contains("created_at"));
+        assertFalse(respJson.contains("DataRetrievalFailureException"));
+    }
+
+    @Test
+    @DisplayName("28. Quét source AdminController xác nhận overview không còn chuỗi SELECT HOLDINGS hoặc TRANSACTIONS")
+    public void testOverview_sourceHasNoHoldingsOrTransactionsSelect() throws Exception {
+        File controllerFile = new File("src/main/java/com/llmgateway/controller/AdminController.java");
+        assertTrue(controllerFile.exists());
+        String code = Files.readString(controllerFile.toPath());
+
+        // Tìm phương thức getDatabaseOverview
+        int idx = code.indexOf("getDatabaseOverview");
+        assertTrue(idx > 0, "Phải tìm thấy phương thức getDatabaseOverview trong AdminController");
+
+        String overviewSection = code.substring(idx);
+        assertFalse(overviewSection.contains("FROM HOLDINGS"), "getDatabaseOverview không được chứa truy vấn HOLDINGS");
+        assertFalse(overviewSection.contains("FROM TRANSACTIONS"), "getDatabaseOverview không được chứa truy vấn TRANSACTIONS");
+    }
+
+    @Test
+    @DisplayName("29. admin.js: login không báo thành công khi overview lỗi và loadDbOverview throw lỗi")
+    public void testAdminJs_loginDoesNotReportSuccessWhenOverviewFails() throws Exception {
+        File jsFile = new File("src/main/resources/static/admin.js");
+        assertTrue(jsFile.exists());
+        String js = Files.readString(jsFile.toPath());
+
+        // Kiểm tra loadDbOverview ném lỗi khi response không OK
+        assertTrue(js.contains("throw e;"), "loadDbOverview phải re-throw exception khi lỗi");
+
+        // Kiểm tra thông báo an toàn khi overview thất bại trong login
+        assertTrue(js.contains("Đăng nhập thành công nhưng không tải được dữ liệu quản trị"));
+
+        // Kiểm tra login() bắt lỗi overview và return không chạy đoạn thông báo thành công
+        int catchIdx = js.indexOf("catch (overviewErr)");
+        int successIdx = js.indexOf("✅ Xác thực ADMIN hoàn tất");
+        assertTrue(catchIdx > 0 && successIdx > 0);
+        assertTrue(catchIdx < successIdx, "catch(overviewErr) phải nằm trước thông báo 'Xác thực ADMIN hoàn tất'");
+    }
 }
