@@ -1,4 +1,7 @@
 # 🚀 FNMF Backend & AI Gateway
+
+> 📖 **Tài liệu đọc code theo từng luồng:** [FNMF Codebase Walkthrough — Draft](docs/codebase-walkthrough/README.md)
+
 **Financial News & Market Forecasting (FNMF)**  
 *Backend REST API, Oracle Database & AI Processing Layer*
 
