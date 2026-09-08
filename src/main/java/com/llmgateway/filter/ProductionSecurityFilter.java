@@ -19,8 +19,8 @@ import java.io.IOException;
  * - /h2-console (và mọi path con)
  * - /swagger-ui (và mọi path con, bao gồm /swagger-ui.html)
  * - /v3/api-docs (và mọi path con)
- * - /admin.html
  * - /api/admin/db/query (và mọi path con)
+ * Lưu ý: Cho phép /admin.html, /admin.css, /admin.js phục vụ Cloud Admin.
  */
 @Component
 @Profile("prod")

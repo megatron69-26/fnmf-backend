@@ -40,16 +40,18 @@ public class AdminService {
     }
 
     public User findUserByIdentifier(String identifier) {
-        if (identifier == null || identifier.trim().isEmpty()) {
+        if (identifier == null || identifier.isBlank()) {
             throw new IllegalArgumentException("Tên đăng nhập hoặc email không được để trống");
         }
         String clean = identifier.trim();
-        List<User> matches = userRepository.findByIdentifierMatches(clean);
-        if (!matches.isEmpty()) {
-            return matches.get(0);
+        List<User> matches = userRepository.findAllByEmailIgnoreCase(clean);
+        if (matches.isEmpty()) {
+            throw new IllegalArgumentException("Không tìm thấy tài khoản: " + clean);
         }
-        return userRepository.findByEmailIgnoreCase(clean)
-                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy người dùng: " + clean));
+        if (matches.size() > 1) {
+            throw new IllegalStateException("Phát hiện nhiều tài khoản trùng khớp với '" + clean + "', từ chối thao tác ngầm.");
+        }
+        return matches.get(0);
     }
 
     @Transactional

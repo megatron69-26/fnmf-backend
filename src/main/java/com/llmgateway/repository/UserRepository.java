@@ -16,8 +16,7 @@ public interface UserRepository extends JpaRepository<User, Long> {
 
     Optional<User> findByEmailIgnoreCase(String email);
 
-    boolean existsByEmail(String email);
+    List<User> findAllByEmailIgnoreCase(String email);
 
-    @Query("SELECT u FROM User u WHERE LOWER(u.email) = LOWER(:identifier) OR LOWER(u.email) LIKE LOWER(CONCAT(:identifier, '@%')) ORDER BY CASE WHEN LOWER(u.email) = LOWER(:identifier) THEN 0 ELSE 1 END, u.id ASC")
-    List<User> findByIdentifierMatches(@Param("identifier") String identifier);
+    boolean existsByEmail(String email);
 }

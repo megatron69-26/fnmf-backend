@@ -102,5 +102,11 @@ public class ProductionProfileTest {
         // 3. Kiểm tra PostgreSQL configuration
         assertEquals("org.postgresql.Driver", props.getProperty("spring.datasource.driver-class-name"));
         assertEquals("org.hibernate.dialect.PostgreSQLDialect", props.getProperty("spring.jpa.database-platform"));
+
+        // 4. Kiểm tra cấu hình Flyway baseline
+        assertEquals("true", props.getProperty("spring.flyway.enabled"));
+        assertEquals("true", props.getProperty("spring.flyway.baseline-on-migrate"));
+        assertEquals("0", props.getProperty("spring.flyway.baseline-version"));
+        assertEquals("classpath:db/migration", props.getProperty("spring.flyway.locations"));
     }
 }

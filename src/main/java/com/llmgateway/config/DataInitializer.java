@@ -174,7 +174,30 @@ public class DataInitializer implements CommandLineRunner {
         }
     }
 
+    public boolean verifyRoleColumnExists() {
+        try {
+            return Boolean.TRUE.equals(jdbcTemplate.execute((ConnectionCallback<Boolean>) conn -> {
+                java.sql.DatabaseMetaData md = conn.getMetaData();
+                try (var rs = md.getColumns(null, null, "USERS", "ROLE")) {
+                    if (rs.next()) return true;
+                }
+                try (var rs = md.getColumns(null, null, "users", "role")) {
+                    if (rs.next()) return true;
+                }
+                return false;
+            }));
+        } catch (Exception e) {
+            log.warn("Không thể kiểm tra metadata cột ROLE: {}", e.getMessage());
+            return false;
+        }
+    }
+
     public int migrateNullRolesToUser() {
+        if (!verifyRoleColumnExists()) {
+            log.error("ROLE MIGRATION ERROR | Cột ROLE chưa tồn tại trên bảng USERS! Migration trước Hibernate chưa được thực thi đúng cách.");
+            throw new IllegalStateException("Cột ROLE không tồn tại trên bảng USERS. Không thể giả vờ migration thành công.");
+        }
+
         try {
             int updated = jdbcTemplate.update("UPDATE USERS SET ROLE = 'USER' WHERE ROLE IS NULL OR TRIM(ROLE) = ''");
             if (updated > 0) {
@@ -184,8 +207,8 @@ public class DataInitializer implements CommandLineRunner {
             }
             return updated;
         } catch (Exception e) {
-            log.warn("ROLE MIGRATION | Không thể cập nhật role (có thể bảng USERS chưa tồn tại hoặc DB đang khởi tạo): {}", e.getMessage());
-            return 0;
+            log.error("ROLE MIGRATION | Lỗi cập nhật dữ liệu cột ROLE: {}", e.getMessage(), e);
+            throw new IllegalStateException("Lỗi khi migrate dữ liệu ROLE: " + e.getMessage(), e);
         }
     }
 
@@ -210,8 +233,12 @@ public class DataInitializer implements CommandLineRunner {
             return;
         }
 
+        // Báo rõ ràng mật khẩu sẽ được cập nhật/reset mỗi khi khởi động lại
+        log.warn("ADMIN BOOTSTRAP | CHÚ Ý: FNMF_ADMIN_BOOTSTRAP_ENABLED=true. Mật khẩu tài khoản admin sẽ được reset/đồng bộ theo biến môi trường mỗi khi server khởi động.");
+
         String targetEmail = email.trim();
-        String targetPassword = password.trim();
+        // Giữ nguyên mật khẩu chính xác như người dùng nhập, tuyệt đối không trim() làm biến dạng mật khẩu
+        String targetPassword = password;
 
         try {
             java.util.Optional<com.llmgateway.entity.User> existingOpt = userRepository.findByEmail(targetEmail);

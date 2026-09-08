@@ -341,3 +341,7 @@ tr:hover {
 .console-entry.info { color: #00F0FF; }
 .console-entry.warn { color: #F5A623; }
 .console-entry.err { color: #F23645; }
+
+.hidden {
+    display: none !important;
+}

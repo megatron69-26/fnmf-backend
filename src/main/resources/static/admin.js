@@ -65,9 +65,9 @@
         if (!notificationBanner) return;
         notificationBanner.textContent = message;
         notificationBanner.className = 'notification-banner ' + (type === 'error' ? 'error' : 'success');
-        notificationBanner.style.display = 'block';
+        notificationBanner.classList.remove('hidden');
         setTimeout(() => {
-            if (notificationBanner) notificationBanner.style.display = 'none';
+            if (notificationBanner) notificationBanner.classList.add('hidden');
         }, 5000);
     }
 
@@ -136,8 +136,8 @@
             await loadDbOverview(true);
 
             // Thành công -> chuyển giao diện sang trạng thái Logged In
-            authLoggedOut.style.display = 'none';
-            authLoggedIn.style.display = 'flex';
+            authLoggedOut.classList.add('hidden');
+            authLoggedIn.classList.remove('hidden');
             authEmailDisplay.textContent = currentAdminEmail;
 
             showBanner('Đăng nhập ADMIN thành công!', 'success');
@@ -161,8 +161,8 @@
         cachedDbData = null;
         stopAutoRefresh();
 
-        if (authLoggedOut) authLoggedOut.style.display = 'flex';
-        if (authLoggedIn) authLoggedIn.style.display = 'none';
+        if (authLoggedOut) authLoggedOut.classList.remove('hidden');
+        if (authLoggedIn) authLoggedIn.classList.add('hidden');
         if (authEmailDisplay) authEmailDisplay.textContent = '';
         if (adminPasswordInput) adminPasswordInput.value = '';
 
