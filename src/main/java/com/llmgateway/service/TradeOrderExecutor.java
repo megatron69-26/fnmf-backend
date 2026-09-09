@@ -4,14 +4,18 @@ import com.llmgateway.dto.market.MarketPriceDto;
 import com.llmgateway.dto.trade.OrderRequest;
 import com.llmgateway.dto.trade.OrderResponse;
 import com.llmgateway.entity.Holding;
+import com.llmgateway.entity.LedgerEntryType;
 import com.llmgateway.entity.Transaction;
 import com.llmgateway.entity.Wallet;
+import com.llmgateway.entity.WalletLedger;
 import com.llmgateway.exception.IdempotencyConflictException;
 import com.llmgateway.repository.HoldingRepository;
 import com.llmgateway.repository.TransactionRepository;
+import com.llmgateway.repository.WalletLedgerRepository;
 import com.llmgateway.repository.WalletRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -28,13 +32,23 @@ public class TradeOrderExecutor {
     private final WalletRepository walletRepository;
     private final HoldingRepository holdingRepository;
     private final TransactionRepository transactionRepository;
+    private final WalletLedgerRepository walletLedgerRepository;
+
+    @Autowired
+    public TradeOrderExecutor(WalletRepository walletRepository,
+                              HoldingRepository holdingRepository,
+                              TransactionRepository transactionRepository,
+                              WalletLedgerRepository walletLedgerRepository) {
+        this.walletRepository = walletRepository;
+        this.holdingRepository = holdingRepository;
+        this.transactionRepository = transactionRepository;
+        this.walletLedgerRepository = walletLedgerRepository;
+    }
 
     public TradeOrderExecutor(WalletRepository walletRepository,
                               HoldingRepository holdingRepository,
                               TransactionRepository transactionRepository) {
-        this.walletRepository = walletRepository;
-        this.holdingRepository = holdingRepository;
-        this.transactionRepository = transactionRepository;
+        this(walletRepository, holdingRepository, transactionRepository, null);
     }
 
     /**
@@ -69,9 +83,25 @@ public class TradeOrderExecutor {
         Transaction transaction;
 
         if ("BUY".equals(orderType)) {
+            BigDecimal balanceBefore = wallet.getBalanceUsd();
             // Trừ tiền ví ảo
             wallet.deductFunds(totalAmount);
             walletRepository.save(wallet);
+            BigDecimal balanceAfter = wallet.getBalanceUsd();
+
+            // Ghi nhận biến động số dư vào sổ cái kiểm toán (wallet_ledger)
+            if (walletLedgerRepository != null) {
+                WalletLedger ledger = new WalletLedger(
+                        wallet.getId(),
+                        null,
+                        LedgerEntryType.TRADE_BUY,
+                        totalAmount.negate(),
+                        balanceBefore,
+                        balanceAfter,
+                        "Paper Trade BUY " + quantity + " " + canonicalSymbol + " @ " + currentPrice
+                );
+                walletLedgerRepository.save(ledger);
+            }
 
             // Khóa và cập nhật bản ghi Holding
             Optional<Holding> holdingOpt = holdingRepository.findByWalletIdAndSymbolForUpdate(wallet.getId(), canonicalSymbol);
@@ -110,9 +140,25 @@ public class TradeOrderExecutor {
                 holdingRepository.save(holding);
             }
 
+            BigDecimal balanceBefore = wallet.getBalanceUsd();
             // Cộng tiền vào ví
             wallet.addFunds(totalAmount);
             walletRepository.save(wallet);
+            BigDecimal balanceAfter = wallet.getBalanceUsd();
+
+            // Ghi nhận biến động số dư vào sổ cái kiểm toán (wallet_ledger)
+            if (walletLedgerRepository != null) {
+                WalletLedger ledger = new WalletLedger(
+                        wallet.getId(),
+                        null,
+                        LedgerEntryType.TRADE_SELL,
+                        totalAmount,
+                        balanceBefore,
+                        balanceAfter,
+                        "Paper Trade SELL " + quantity + " " + canonicalSymbol + " @ " + currentPrice
+                );
+                walletLedgerRepository.save(ledger);
+            }
 
             transaction = new Transaction(wallet.getId(), canonicalSymbol, "SELL", currentPrice, quantity, totalAmount, clientOrderId);
         } else {

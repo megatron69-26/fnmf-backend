@@ -192,7 +192,7 @@ public class AdminController {
                 auth.adminUser.getEmail(), target, balance);
 
         try {
-            Map<String, Object> res = adminService.setBalance(target, balance);
+            Map<String, Object> res = adminService.setBalance(auth.adminUser.getEmail(), target, balance);
             return ResponseEntity.ok(res);
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("status", "ERROR", "message", e.getMessage()));

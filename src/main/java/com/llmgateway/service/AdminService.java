@@ -23,11 +23,20 @@ public class AdminService {
 
     private final UserRepository userRepository;
     private final WalletRepository walletRepository;
+    private final com.llmgateway.repository.WalletLedgerRepository walletLedgerRepository;
 
     public AdminService(UserRepository userRepository,
                         WalletRepository walletRepository) {
+        this(userRepository, walletRepository, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public AdminService(UserRepository userRepository,
+                        WalletRepository walletRepository,
+                        com.llmgateway.repository.WalletLedgerRepository walletLedgerRepository) {
         this.userRepository = userRepository;
         this.walletRepository = walletRepository;
+        this.walletLedgerRepository = walletLedgerRepository;
     }
 
     public User findUserByEmailOrId(String emailOrId) {
@@ -103,6 +112,11 @@ public class AdminService {
 
     @Transactional
     public Map<String, Object> setBalance(String identifier, BigDecimal balance) {
+        return setBalance("ADMIN", identifier, balance);
+    }
+
+    @Transactional
+    public Map<String, Object> setBalance(String adminEmail, String identifier, BigDecimal balance) {
         if (balance == null || balance.compareTo(BigDecimal.ZERO) < 0) {
             throw new IllegalArgumentException("Số dư phải lớn hơn hoặc bằng 0");
         }
@@ -110,11 +124,29 @@ public class AdminService {
         Wallet wallet = walletRepository.findByUserId(user.getId())
                 .orElseThrow(() -> new IllegalArgumentException("Người dùng chưa có ví tiền"));
 
+        BigDecimal before = wallet.getBalanceUsd();
+        BigDecimal diff = balance.subtract(before);
+
         wallet.forceSetBalance(balance);
         wallet.setUpdatedAt(LocalDateTime.now());
         walletRepository.save(wallet);
 
-        log.info(">>> [ADMIN] Đã đặt số dư tài khoản '{}' thành ${}", user.getEmail(), balance);
+        // Ghi Sổ cái (Ledger) kiểm toán bắt buộc đối với thao tác Admin
+        com.llmgateway.entity.WalletLedger ledger = new com.llmgateway.entity.WalletLedger(
+                wallet.getId(),
+                null,
+                com.llmgateway.entity.LedgerEntryType.ADMIN_ADJUSTMENT,
+                diff,
+                before,
+                balance,
+                "Admin adjustment by " + (adminEmail != null ? adminEmail : "ADMIN") + ": $" + before + " -> $" + balance
+        );
+        if (walletLedgerRepository != null) {
+            walletLedgerRepository.save(ledger);
+        }
+
+        log.info(">>> [ADMIN] Đã đặt số dư tài khoản '{}' thành ${} (trước: ${}, chênh lệch: ${})",
+                user.getEmail(), balance, before, diff);
 
         Map<String, Object> res = new HashMap<>();
         res.put("status", "SUCCESS");
@@ -122,6 +154,8 @@ public class AdminService {
         res.put("email", user.getEmail());
         res.put("userId", user.getId());
         res.put("newBalanceUsd", wallet.getBalanceUsd());
+        res.put("balanceBefore", before);
+        res.put("difference", diff);
         return res;
     }
     

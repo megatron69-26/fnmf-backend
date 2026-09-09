@@ -1,4 +1,4 @@
-﻿# FNMF Codebase Walkthrough — Draft
+# FNMF Codebase Walkthrough — Draft
 
 > Trạng thái: bản nháp phục vụ học code, chuẩn bị báo cáo và bảo vệ đồ án. Tài liệu mô tả code tại backend commit `c6fc16c` và Android commit `5bc7f7d`. Các ảnh bên dưới được sinh trực tiếp từ source tương ứng để người đọc có thể đối chiếu.
 
@@ -293,6 +293,7 @@ Toàn bộ các lỗi nghiêm trọng về tính đúng đắn dữ liệu và h
 | **Paper Trading** | Đặt lệnh Mua/Bán ảo | Đặt lệnh với Pessimistic Lock & Idempotency | **Implemented** | Khóa bi quan chống Race Condition và `clientOrderId` (UUID) bảo đảm không trùng lặp lệnh. |
 | **Danh mục theo dõi (Watchlist)** | Danh sách yêu thích | Cloud CRUD + Phân lập Room DB theo User | **Implemented** | Đầy đủ GET, POST, DELETE `/api/watchlist`; dữ liệu cache Room phân tách theo `userEmail`. |
 | **Quản trị hệ thống (Admin)** | Form nạp tiền/cấp coin | Cloud Admin tối giản đặt số dư theo Email | **Implemented** | Bảo mật phân quyền `ADMIN`, loại bỏ các form legacy, quản lý người dùng bằng email chuẩn hóa. |
+| **Cổng Nạp/Rút Tiền (Banking Sandbox)** | Chưa có / Form tĩnh | Gateway Provider-Neutral + Hosted Checkout + Sổ cái Ledger + Idempotency | **Implemented** | Minh họa chuẩn kiến trúc Payment/Banking trong đồ án; tiền mô phỏng 100%, bảo vệ ví qua Pessimistic Lock và Append-Only Ledger. |
 
 ---
 
@@ -320,4 +321,83 @@ Toàn bộ các lỗi nghiêm trọng về tính đúng đắn dữ liệu và h
 - Thêm log mẫu đã che token/API key.
 - Gắn release/tag chính thức sau khi v1.1.13 được merge vào Android `main`.
 - Xuất bản PDF/Overleaf nếu giảng viên yêu cầu mẫu báo cáo học thuật.
+
+---
+
+## 13. Module Nạp/Rút Tiền Sandbox (Simulated Banking Architecture)
+
+### 13.1. Mục tiêu & Định vị học thuật
+Module **Nạp/Rút Tiền Sandbox** được thiết kế nhằm phục vụ mục tiêu học phần và minh họa kiến trúc Payment Gateway / Core Banking tiêu chuẩn trong đồ án CNTT:
+1. **Tuân thủ chính sách Zero-Risk:** Toàn bộ nguồn tiền là **tiền USD mô phỏng (Sandbox)**. Tuyệt đối không tích hợp cổng thẻ thật, không lưu trữ và không yêu cầu thông tin nhạy cảm (Số thẻ tín dụng, CVV, OTP SMS, Mật khẩu ngân hàng).
+2. **Provider-Neutral Architecture:** Tách biệt rõ ràng tầng nghiệp vụ (`PaymentService`), tầng định tuyến cổng thanh toán (`PaymentProviderRegistry`, `PaymentProvider`), và nhà cung cấp mô phỏng nội bộ (`InternalSandboxPaymentProvider`). Sẵn sàng mở rộng tích hợp Stripe/Paypal/VNPay thật trong tương lai mà không phải sửa logic cốt lõi.
+3. **Append-Only Balance Ledger (Sổ cái biến động số dư đơn):** Mọi biến động số dư do Nạp (`DEPOSIT`), Rút (`WITHDRAWAL`), Điều chỉnh (`ADMIN_ADJUSTMENT`), cũng như Khớp lệnh giao dịch chứng khoán/crypto (`TRADE_BUY`, `TRADE_SELL`) đều bắt buộc ghi vào bảng sổ cái kiểm toán bất biến `wallet_ledger` (lưu trữ `amount_usd`, `balance_before`, `balance_after`, `description`, `entry_type`, `reference_id`). Hệ thống không tuyên bố sai là kế toán kép (double-entry).
+4. **Idempotency & Concurrency Race Protection:** Bảo vệ ví trước tình huống người dùng bấm liên tục nhiều lần (double-click) hoặc mạng bị chập chờn timeout thông qua `client_request_id` (UUID), khóa bi quan `@Lock(PESSIMISTIC_WRITE)`, bảng lưu vết sự kiện `payment_events`, và cơ chế bắt `DataIntegrityViolationException` để replay an toàn khi có race condition đồng thời tạo đơn.
+
+### 13.2. Sơ đồ tuần tự giao dịch Sandbox (Sequence Diagram)
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as Người dùng (Mobile)
+    participant App as Android Client
+    participant API as Backend REST API
+    participant DB as Database (PostgreSQL/H2)
+    participant Web as Hosted Checkout (Webview/CCT)
+
+    User->>App: Mở Ví & chọn Nạp/Rút tiền
+    App->>API: POST /api/payments/deposits (hoặc withdrawals)<br/>Header: Bearer Token | Body: {amountUsd, clientRequestId}
+    API->>DB: Kiểm tra Idempotency & Tạo PaymentOrder (PENDING, checkoutToken, expiresAt = +15m)
+    API-->>App: Trả về PaymentOrderDto (kèm checkoutUrl)
+    App->>Web: Khởi chạy Chrome Custom Tabs mở checkoutUrl
+    User->>Web: Chọn "Xác nhận Nạp/Rút thành công" (hoặc Mô phỏng thất bại)
+    Web->>API: POST /sandbox-bank/checkout/process<br/>Body: {checkoutToken, action}
+    Note over API,DB: PESSIMISTIC LOCK Wallet<br/>Kiểm tra hạn 15 phút (nếu quá hạn -> FAILED, HTTP 410)<br/>Cập nhật Balance & Ghi nhận WalletLedger (Append-Only)<br/>Chuyển trạng thái sang SUCCEEDED
+    API-->>Web: Hiển thị trang kết quả giao dịch (CSP-compliant, external static assets)
+    User->>App: Quay trở lại ứng dụng FNMF
+    App->>API: GET /api/payments/{id} (trong onResume)
+    API-->>App: Trả về trạng thái SUCCEEDED
+    App->>User: Thông báo thành công & Tự động làm mới số dư ví
+```
+
+### 13.3. Máy trạng thái đơn hàng (Order State Machine)
+```
+          ┌─────────────┐
+          │   PENDING   │ (Đơn hàng khởi tạo, chờ thanh toán, hạn 15 phút)
+          └──────┬──────┘
+                 │
+                 ├──[Bắt đầu xử lý / Callback]──► ┌──────────────┐
+                 │                               │  PROCESSING  │
+                 │                               └───────┬──────┘
+                 │                                       │
+                 ├──[Xác nhận thành công]────────► ┌─────▼────────┐
+                 │                                │  SUCCEEDED   │ (Cộng/Trừ ví + Ghi sổ cái wallet_ledger)
+                 │                                └──────────────┘
+                 │
+                 ├──[Từ chối / Quá số dư / Hết hạn 15p (HTTP 410)]► ┌────────────┐
+                 │                                                 │    FAILED    │
+                 │                                                 └──────────────┘
+                 │
+                 └──[Người dùng chủ động hủy]────────────────────► ┌─────────────┐
+                                                                   │  CANCELLED  │
+                                                                   └─────────────┘
+```
+
+### 13.4. Bảng hợp đồng API Sandbox Banking (API Contracts)
+| Endpoint | Phương thức | Header | Body / Tham số | Mô tả & Xử lý |
+| :--- | :---: | :--- | :--- | :--- |
+| `/api/payments/deposits` | `POST` | `Authorization: Bearer <token>` | `{"amountUsd": 500.00, "clientRequestId": "uuid"}` | Tạo yêu cầu nạp tiền Sandbox. Thiếu/sai token -> HTTP 401. Kiểm tra scale <= 2, sinh `checkoutToken` kèm `expiresAt` (+15 phút). Trả về HTTP 200 (hoặc 409 nếu trùng requestId nhưng đổi số tiền). |
+| `/api/payments/withdrawals` | `POST` | `Authorization: Bearer <token>` | `{"amountUsd": 200.00, "clientRequestId": "uuid"}` | Tạo yêu cầu rút tiền Sandbox. Thiếu/sai token -> HTTP 401. Không đủ số dư khả dụng -> HTTP 422. |
+| `/api/payments` | `GET` | `Authorization: Bearer <token>` | Không | Lấy lịch sử tất cả các giao dịch Nạp/Rút của tài khoản (mới nhất xếp trước). |
+| `/api/payments/{id}` | `GET` | `Authorization: Bearer <token>` | `id`: Long (Path variable) | Lấy chi tiết trạng thái đơn hàng (dùng để polling sau khi quay lại từ trình duyệt). |
+| `/api/payments/{id}/cancel`| `POST` | `Authorization: Bearer <token>` | `id`: Long (Path variable) | Hủy yêu cầu đang ở trạng thái `PENDING` hoặc `PROCESSING`. |
+| `/sandbox-bank/checkout/{token}` | `GET` | Public (trên Browser) | `token`: String | Trang HTML mô phỏng cổng thanh toán (Hosted Simulation UI). Tuân thủ 100% CSP Railway (sử dụng `/sandbox-checkout.css` và `/sandbox-checkout.js`, không inline style/script). Quá hạn 15 phút -> HTTP 410 GONE. |
+| `/sandbox-bank/checkout/process` | `POST`| Form Post (Browser) | `checkoutToken`, `action` (`APPROVE` / `FAIL`) | Xử lý hành động mô phỏng từ người dùng, thực hiện khóa bi quan và hạch toán số dư vào `wallet_ledger`. Quá hạn 15 phút -> HTTP 410 GONE. |
+
+### 13.5. Quy định ràng buộc & Giới hạn kỹ thuật (RC2 Hardening)
+1. **Quy chuẩn đơn vị tiền tệ:** Toàn bộ số tiền nạp/rút tính bằng `USD`, bắt buộc có scale tối đa là 2 chữ số thập phân (cents, ví dụ: `$100.50`). Mọi request có scale > 2 đều bị từ chối với HTTP 400.
+2. **Hạn mức giao dịch:** Giới hạn mỗi lệnh tối đa là `$100,000.00 USD` nhằm bảo vệ tính toàn vẹn của hệ thống giả lập.
+3. **Thời hạn Token thanh toán (15-Minute Expiry):** `checkoutToken` có hiệu lực tối đa trong vòng 15 phút (`expiresAt`). Mọi thao tác truy cập checkout hoặc xử lý thanh toán khi đã hết hạn đều bị từ chối với HTTP 410 `GONE`, đồng thời chuyển trạng thái đơn hàng sang `FAILED` (lý do: "Giao dịch đã hết hạn thanh toán (quá 15 phút)").
+4. **Tuân thủ CSP Railway Production:** Giao diện Hosted Checkout tuyệt đối không chứa inline CSS (`<style>` hoặc `style="..."`) và không chứa inline JS (`<script>` hoặc `onsubmit="..."`). Toàn bộ asset được tách biệt vào static files `/sandbox-checkout.css` và `/sandbox-checkout.js`, tuân thủ chính sách `script-src 'self'; style-src 'self'`.
+5. **Chống giả mạo dữ liệu phía Android (Anti-Fake Defaults):** `PaymentHistoryAdapter` và `PaymentItemFormatter` bảo vệ giao diện khi các trường server trả về `null` bằng ký tự gạch ngang `"—"` hoặc `"UNKNOWN"`, tuyệt đối không tự ý gán số tiền giả `$0.00`, mã đơn `#0` hoặc trạng thái `PENDING`. Nút thao tác chỉ mở khi có `orderId` hợp lệ.
+6. **Bền bỉ vòng đời & Chống mất khóa Idempotency:** Android client quản lý `PaymentIdempotencyManager` và `activePendingOrderId` lưu vết qua `Bundle` và `SharedPreferences`, bảo toàn khóa idempotency khi xoay màn hình hoặc tiến trình bị hệ thống thu hồi (process death). Mọi Retrofit `Call` đều được hủy an toàn trong `onDestroyView()`.
+7. **Vị trí giao diện trên Android:** Toàn bộ tính năng Nạp/Rút tiền được tích hợp gọn gàng bên trong tab **Ví & Hồ sơ** (`WalletProfileFragment`), không thêm Bottom Navigation thứ sáu, tuân thủ nguyên tắc thiết kế tối giản của ứng dụng.
 

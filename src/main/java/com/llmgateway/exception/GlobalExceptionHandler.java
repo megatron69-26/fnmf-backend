@@ -89,6 +89,45 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * Unauthorized errors (Token thiếu, sai hoặc hết hạn).
+     */
+    @ExceptionHandler(UnauthorizedException.class)
+    public ResponseEntity<Map<String, Object>> handleUnauthorized(UnauthorizedException ex) {
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of(
+                "status", "ERROR",
+                "code", "UNAUTHORIZED",
+                "error", ex.getMessage() != null ? ex.getMessage() : "Unauthorized",
+                "timestamp", Instant.now().toString()
+        ));
+    }
+
+    /**
+     * Checkout session expired (410 GONE).
+     */
+    @ExceptionHandler(CheckoutExpiredException.class)
+    public ResponseEntity<Map<String, Object>> handleCheckoutExpired(CheckoutExpiredException ex) {
+        return ResponseEntity.status(HttpStatus.GONE).body(Map.of(
+                "status", "ERROR",
+                "code", "CHECKOUT_EXPIRED",
+                "error", ex.getMessage() != null ? ex.getMessage() : "Phiên giao dịch đã hết hạn",
+                "timestamp", Instant.now().toString()
+        ));
+    }
+
+    /**
+     * Số dư ví không đủ để rút tiền (422 UNPROCESSABLE_ENTITY).
+     */
+    @ExceptionHandler(InsufficientBalanceException.class)
+    public ResponseEntity<Map<String, Object>> handleInsufficientBalance(InsufficientBalanceException ex) {
+        return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY).body(Map.of(
+                "status", "ERROR",
+                "code", "INSUFFICIENT_BALANCE",
+                "error", ex.getMessage() != null ? ex.getMessage() : "Số dư ví không đủ",
+                "timestamp", Instant.now().toString()
+        ));
+    }
+
+    /**
      * Mọi RuntimeException khác (bao gồm lỗi từ OpenAI API).
      */
     @ExceptionHandler(RuntimeException.class)
