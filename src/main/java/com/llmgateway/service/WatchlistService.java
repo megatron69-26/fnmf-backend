@@ -39,21 +39,11 @@ public class WatchlistService {
         this.aiNewsService = aiNewsService;
     }
 
-    // ====================================================================================
-    // 🎓 [CÂU HỎI BẢO VỆ ĐỒ ÁN: TÍNH NĂNG WATCHLIST & BẢO MẬT DỮ LIỆU NGƯỜI DÙNG]
-    // ------------------------------------------------------------------------------------
-    // CÂU HỎI CỦA GIẢNG VIÊN:
-    //   "Làm sao đảm bảo danh mục theo dõi (Watchlist) của người dùng A không bị người dùng B
-    //    nhìn thấy hoặc sửa đổi? Và làm sao chống việc người dùng thêm trùng 1 mã nhiều lần?"
-    //
-    // CÂU TRẢ LỜI CỦA MÃ NGUỒN (CODE TRẢ LỜI):
-    //   1. PHÂN QUYỀN SCOPE USER: Mọi thao tác đều nhận `userId` được giải mã từ JWT Token
-    //      hợp lệ. Truy vấn `findByUserIdOrderByDisplayOrderAsc(userId)` chỉ lấy dữ liệu của chính User đó.
-    //   2. CHỐNG TRÙNG LẶP: Hàm `findByUserIdAndSymbol(userId, cleanSymbol)` kiểm tra trước
-    //      khi lưu, nếu đã có sẽ báo lỗi 400 ngay.
-    //   3. LÀM GIÀU DỮ LIỆU ĐỘNG: Tự động ghép nối mã theo dõi với giá thị trường và biến động
-    //      24h thời gian thực từ Alpha Vantage trước khi trả về cho App Android.
-    // ====================================================================================
+    /**
+     * Lấy danh sách watchlist của User từ PostgreSQL.
+     * Khi provider giá lỗi, price và change24h trả null (tuyệt đối không trả 0.0 giả).
+     * Tất cả các mã đã lưu trong DB đều được trả về đầy đủ.
+     */
     public List<WatchlistItemDto> getUserWatchlist(Long userId) {
         List<Watchlist> items = watchlistRepository.findByUserIdOrderByDisplayOrderAsc(userId);
         List<WatchlistItemDto> result = new ArrayList<>();
@@ -68,8 +58,8 @@ public class WatchlistService {
             result.add(new WatchlistItemDto(
                     w.getId(),
                     w.getSymbol(),
-                    priceDto != null ? priceDto.getName() : w.getSymbol(),
-                    priceDto != null ? priceDto.getCategory() : "MARKET",
+                    priceDto != null && priceDto.getName() != null ? priceDto.getName() : w.getSymbol(),
+                    priceDto != null && priceDto.getCategory() != null ? priceDto.getCategory() : "MARKET",
                     priceDto != null ? priceDto.getPrice() : null,
                     priceDto != null ? priceDto.getChange24h() : null,
                     w.getDisplayOrder(),
@@ -81,10 +71,7 @@ public class WatchlistService {
     }
 
     /**
-     * 🎯 [TÍNH NĂNG CÁ NHÂN HÓA CAO CẤP]:
-     * CHỈ GỌI GEMINI AI ĐỂ TÓM TẮT TIN TỨC & DỰ BÁO CHIẾN LƯỢC CHO CÁC MÃ USER ĐÃ TÍCH QUAN TÂM (WATCHLIST)!
-     * - Tránh lãng phí Token cho các mã User không quan tâm.
-     * - Cung cấp bản tin tài chính tổng hợp chuyên sâu cho danh mục của riêng User đó.
+     * Bản tin AI chuyên sâu cho các mã user đã tích quan tâm trong Watchlist.
      */
     public List<WatchlistAiInsightDto> getWatchlistAiInsights(Long userId) {
         List<Watchlist> items = watchlistRepository.findByUserIdOrderByDisplayOrderAsc(userId);
@@ -92,20 +79,33 @@ public class WatchlistService {
 
         for (Watchlist w : items) {
             String symbol = w.getSymbol();
-            MarketPriceDto priceDto = marketDataService.getPriceBySymbol(symbol);
+            MarketPriceDto priceDto = null;
+            try {
+                priceDto = marketDataService.getPriceBySymbol(symbol);
+            } catch (Exception e) {
+                log.warn("Không thể tải giá cho insight symbol {}: {}", symbol, e.getMessage());
+            }
 
-            // 1. Chỉ gọi AI Dự báo chiến lược cho mã User đang theo dõi
-            ForecastRequest forecastReq = new ForecastRequest(symbol, "24H_7D");
-            ForecastResponse forecast = forecastService.generateForecast(forecastReq);
+            ForecastResponse forecast = null;
+            try {
+                ForecastRequest forecastReq = new ForecastRequest(symbol, "24H_7D");
+                forecast = forecastService.generateForecast(forecastReq);
+            } catch (Exception e) {
+                log.warn("Không thể tạo forecast cho insight symbol {}: {}", symbol, e.getMessage());
+            }
 
-            // 2. Chỉ lấy các bài báo AI liên quan trực tiếp đến mã User đang theo dõi
-            List<NewsFeedItemDto> newsList = aiNewsService.getLiveAiNewsFeed(symbol, 2);
+            List<NewsFeedItemDto> newsList = emptyNewsList();
+            try {
+                newsList = aiNewsService.getLiveAiNewsFeed(symbol, 2);
+            } catch (Exception e) {
+                log.warn("Không thể tải news cho insight symbol {}: {}", symbol, e.getMessage());
+            }
 
             insights.add(new WatchlistAiInsightDto(
                     w.getId(),
                     symbol,
-                    priceDto != null ? priceDto.getName() : symbol,
-                    priceDto != null ? priceDto.getCategory() : "MARKET",
+                    priceDto != null && priceDto.getName() != null ? priceDto.getName() : symbol,
+                    priceDto != null && priceDto.getCategory() != null ? priceDto.getCategory() : "MARKET",
                     priceDto != null ? priceDto.getPrice() : null,
                     priceDto != null ? priceDto.getChange24h() : null,
                     forecast,
@@ -116,8 +116,13 @@ public class WatchlistService {
         return insights;
     }
 
+    private List<NewsFeedItemDto> emptyNewsList() {
+        return new ArrayList<>();
+    }
+
     /**
-     * Thêm một mã tài sản vào danh sách theo dõi
+     * Thêm một mã tài sản vào danh sách theo dõi.
+     * Vẫn lưu thành công dù giá thời gian thực tạm thời lỗi.
      */
     @Transactional
     public WatchlistItemDto addToWatchlist(Long userId, WatchlistRequest request) {
@@ -138,12 +143,18 @@ public class WatchlistService {
         watchlistRepository.save(watchlist);
         log.info("THÊM WATCHLIST THÀNH CÔNG | userId={} | symbol={}", userId, cleanSymbol);
 
-        MarketPriceDto priceDto = marketDataService.getPriceBySymbol(cleanSymbol);
+        MarketPriceDto priceDto = null;
+        try {
+            priceDto = marketDataService.getPriceBySymbol(cleanSymbol);
+        } catch (Exception e) {
+            log.warn("Không thể nạp giá khi thêm watchlist cho {}: {}", cleanSymbol, e.getMessage());
+        }
+
         return new WatchlistItemDto(
                 watchlist.getId(),
                 cleanSymbol,
-                priceDto != null ? priceDto.getName() : cleanSymbol,
-                priceDto != null ? priceDto.getCategory() : "MARKET",
+                priceDto != null && priceDto.getName() != null ? priceDto.getName() : cleanSymbol,
+                priceDto != null && priceDto.getCategory() != null ? priceDto.getCategory() : "MARKET",
                 priceDto != null ? priceDto.getPrice() : null,
                 priceDto != null ? priceDto.getChange24h() : null,
                 watchlist.getDisplayOrder(),
@@ -152,7 +163,7 @@ public class WatchlistService {
     }
 
     /**
-     * Xóa một mã khỏi danh sách theo dõi
+     * Xóa một mã khỏi danh sách theo dõi.
      */
     @Transactional
     public void removeFromWatchlist(Long userId, String symbol) {

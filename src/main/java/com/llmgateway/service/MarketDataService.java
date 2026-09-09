@@ -13,7 +13,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -65,7 +64,9 @@ public class MarketDataService {
 
     /**
      * Lấy giá thời gian thực của các tài sản chuẩn hóa (BTCUSDT, ETHUSDT, XAUUSD).
-     * Loại bỏ hoàn toàn USOIL vì không có stream WTI khả thi không cạn quota.
+     * Một symbol lỗi không được làm mất các symbol còn hoạt động.
+     * /api/market/prices trả danh sách các symbol lấy thành công.
+     * Chỉ trả 503 khi toàn bộ provider đều lỗi và không có cache thật nào khả dụng.
      */
     public List<MarketPriceDto> getAllPrices() {
         long now = System.currentTimeMillis();
@@ -77,9 +78,16 @@ public class MarketDataService {
         List<MarketPriceDto> results = new ArrayList<>();
 
         for (MarketSymbolConfig.SymbolMeta meta : MarketSymbolConfig.getAllCanonical()) {
-            MarketPriceDto dto = fetchOrCachePrice(meta);
-            if (dto != null) {
-                results.add(dto);
+            try {
+                MarketPriceDto dto = fetchOrCachePrice(meta);
+                if (dto != null) {
+                    results.add(dto);
+                }
+            } catch (Exception e) {
+                log.warn("Lỗi khi xử lý giá cho mã {}: {}", meta.canonicalSymbol(), e.getMessage());
+                if (priceCache.containsKey(meta.canonicalSymbol())) {
+                    results.add(createStaleDto(priceCache.get(meta.canonicalSymbol())));
+                }
             }
         }
 
@@ -165,6 +173,26 @@ public class MarketDataService {
     }
 
     // =========================================================================
+    // TESTING HELPERS & CACHE MANAGEMENT
+    // =========================================================================
+
+    public void clearCache() {
+        priceCache.clear();
+        candleCache.clear();
+        newsFeedCache.clear();
+        lastPriceFetchTime = 0;
+        lastNewsFetchTime = 0;
+    }
+
+    public void putPriceInCache(MarketPriceDto dto) {
+        priceCache.put(dto.getSymbol(), dto);
+    }
+
+    public Map<String, MarketPriceDto> getPriceCache() {
+        return priceCache;
+    }
+
+    // =========================================================================
     // PRIVATE HELPER METHODS (ZERO FAKE DATA)
     // =========================================================================
 
@@ -197,24 +225,28 @@ public class MarketDataService {
         // Provider failure policy: Return cache with stale=true if real cache exists
         if (priceCache.containsKey(canonical)) {
             MarketPriceDto cached = priceCache.get(canonical);
-            MarketPriceDto staleDto = new MarketPriceDto(
-                    cached.getSymbol(),
-                    cached.getName(),
-                    cached.getCategory(),
-                    cached.getPrice(),
-                    cached.getChange24h(),
-                    cached.getBidPrice(),
-                    cached.getAskPrice(),
-                    cached.getLastUpdated(),
-                    true,
-                    "CACHE_BINANCE",
-                    cached.getFetchedAt()
-            );
+            MarketPriceDto staleDto = createStaleDto(cached);
             log.warn("SỬ DỤNG GIÁ CACHE CHO MÃ (STALE) | symbol={} | price={}", canonical, staleDto.getPrice());
             return staleDto;
         }
 
         return null;
+    }
+
+    private MarketPriceDto createStaleDto(MarketPriceDto cached) {
+        return new MarketPriceDto(
+                cached.getSymbol(),
+                cached.getName(),
+                cached.getCategory(),
+                cached.getPrice(),
+                cached.getChange24h(),
+                cached.getBidPrice(),
+                cached.getAskPrice(),
+                cached.getLastUpdated(),
+                true,
+                "CACHE_BINANCE",
+                cached.getFetchedAt()
+        );
     }
 
     private List<NewsFeedItemDto> fetchNewsFromApi(int limit) {

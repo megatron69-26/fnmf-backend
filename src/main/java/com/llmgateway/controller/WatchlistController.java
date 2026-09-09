@@ -3,6 +3,7 @@ package com.llmgateway.controller;
 import com.llmgateway.dto.watchlist.WatchlistAiInsightDto;
 import com.llmgateway.dto.watchlist.WatchlistItemDto;
 import com.llmgateway.dto.watchlist.WatchlistRequest;
+import com.llmgateway.exception.UnauthorizedException;
 import com.llmgateway.service.WatchlistService;
 import com.llmgateway.util.JwtUtil;
 import jakarta.validation.Valid;
@@ -88,7 +89,7 @@ public class WatchlistController {
 
     private Long extractUserId(String authHeader) {
         if (authHeader == null || authHeader.isBlank()) {
-            throw new IllegalArgumentException("Vui lòng đính kèm Bearer Token hợp lệ trong Header Authorization!");
+            throw new UnauthorizedException("Vui lòng đính kèm Bearer Token hợp lệ trong Header Authorization!");
         }
         String token = authHeader.trim();
         if (token.startsWith("Bearer ") || token.startsWith("bearer ")) {
@@ -99,11 +100,11 @@ public class WatchlistController {
         }
         if (!jwtUtil.validateToken(token)) {
             log.warn("Xác thực Bearer token thất bại hoặc token đã hết hạn");
-            throw new IllegalArgumentException("Token không hợp lệ hoặc đã hết hạn! Vui lòng đăng nhập lại để lấy token mới.");
+            throw new UnauthorizedException("Token không hợp lệ hoặc đã hết hạn! Vui lòng đăng nhập lại để lấy token mới.");
         }
         Long userId = jwtUtil.getUserIdFromToken(token);
         if (userId == null) {
-            throw new IllegalArgumentException("Không thể xác định danh tính người dùng từ Token!");
+            throw new UnauthorizedException("Không thể xác định danh tính người dùng từ Token!");
         }
         return userId;
     }

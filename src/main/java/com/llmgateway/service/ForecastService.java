@@ -9,6 +9,7 @@ import com.llmgateway.dto.market.CandleDto;
 import com.llmgateway.dto.market.MarketPriceDto;
 import com.llmgateway.entity.MarketForecast;
 import com.llmgateway.entity.NewsAiCache;
+import com.llmgateway.exception.MarketDataUnavailableException;
 import com.llmgateway.repository.MarketForecastRepository;
 import com.llmgateway.repository.NewsAiCacheRepository;
 import org.slf4j.Logger;
@@ -74,7 +75,7 @@ public class ForecastService {
     //
     // CÂU TRẢ LỜI CỦA MÃ NGUỒN (CODE TRẢ LỜI):
     //   1. THU THẬP DỮ LIỆU ĐA TẦNG:
-    //      - Tầng Kỹ thuật: 30 cây nến OHLCV từ Alpha Vantage (Module 1).
+    //      - Tầng Kỹ thuật: 30 cây nến OHLCV từ Binance (Module 1).
     //      - Tầng Vĩ mô / Tâm lý: Các bài báo kinh tế mới nhất đã phân tích AI trong Oracle DB (Module 2).
     //   2. AI FUSION ENGINE (GEMINI AI):
     //      - Đóng gói chuỗi nến + tin tức vào Prompt chuyên gia chiến lược định lượng.
@@ -88,13 +89,18 @@ public class ForecastService {
     public ForecastResponse generateForecast(ForecastRequest request) {
         String cleanSymbol = request.getSymbol().trim().toUpperCase();
 
-        // 1. Kiểm tra CSDL Oracle xem có bản dự báo còn hạn (15 phút) không
+        // 1. Kiểm tra tính khả dụng của giá thị trường thời gian thực (Zero Fake / Zero Stale)
+        MarketPriceDto priceDto = marketDataService.getPriceBySymbol(cleanSymbol);
+        if (priceDto == null || Boolean.TRUE.equals(priceDto.isStale()) || priceDto.getPrice() == null) {
+            throw new MarketDataUnavailableException("Dữ liệu thị trường thời gian thực không khả dụng hoặc bị cũ (stale), không thể tạo dự báo AI cho mã: " + cleanSymbol);
+        }
+
+        // 2. Kiểm tra CSDL Oracle xem có bản dự báo còn hạn (15 phút) không
         Optional<MarketForecast> cachedOpt = forecastRepository.findTopBySymbolOrderByCreatedAtDesc(cleanSymbol);
         if (cachedOpt.isPresent()) {
             MarketForecast cached = cachedOpt.get();
             if (cached.getCreatedAt().isAfter(LocalDateTime.now().minusMinutes(FORECAST_CACHE_MINUTES))) {
                 log.info("LẤY DỰ BÁO TỪ ORACLE DB CACHE | symbol={} | recommendation={}", cleanSymbol, cached.getRecommendation());
-                MarketPriceDto priceDto = marketDataService.getPriceBySymbol(cleanSymbol);
                 return new ForecastResponse(
                         cached.getSymbol(),
                         priceDto.getName() != null ? priceDto.getName() : cleanSymbol,
@@ -114,12 +120,11 @@ public class ForecastService {
             }
         }
 
-        // 2. Thu thập dữ liệu thực tế từ Alpha Vantage & Oracle DB
-        MarketPriceDto priceDto = marketDataService.getPriceBySymbol(cleanSymbol);
+        // 3. Thu thập dữ liệu nến thực tế từ Binance & tin tức CSDL
         List<CandleDto> candles = marketDataService.getCandles(cleanSymbol, "daily");
         List<NewsAiCache> recentNews = newsAiCacheRepository.findTop10ByOrderByPublishedAtDesc();
 
-        // 3. Phân tích qua Gemini AI (hoặc Heuristic nếu chưa có Key)
+        // 4. Phân tích qua Gemini AI (hoặc Heuristic nếu chưa có Key)
         ForecastResponse response;
         if (geminiApiKey != null && !geminiApiKey.isBlank()) {
             response = callGeminiForForecast(cleanSymbol, priceDto, candles, recentNews, request.getTimeframe());
@@ -127,7 +132,7 @@ public class ForecastService {
             response = generateHeuristicForecast(cleanSymbol, priceDto, candles, recentNews, request.getTimeframe());
         }
 
-        // 4. Lưu bản dự báo vào bảng MARKET_FORECASTS trong Oracle DB
+        // 5. Lưu bản dự báo vào bảng MARKET_FORECASTS trong CSDL
         try {
             MarketForecast entity = new MarketForecast(
                     response.getSymbol(),
@@ -143,9 +148,9 @@ public class ForecastService {
                     response.getFundamentalOutlook()
             );
             forecastRepository.save(entity);
-            log.info("ĐÃ LƯU DỰ BÁO AI MỚI VÀO ORACLE DB | symbol={} | recommendation={}", cleanSymbol, entity.getRecommendation());
+            log.info("ĐÃ LƯU DỰ BÁO AI MỚI VÀO CSDL | symbol={} | recommendation={}", cleanSymbol, entity.getRecommendation());
         } catch (Exception e) {
-            log.warn("Không thể lưu dự báo vào CSDL Oracle: {}", e.getMessage());
+            log.warn("Không thể lưu dự báo vào CSDL: {}", e.getMessage());
         }
 
         response.setFromCache(false);
