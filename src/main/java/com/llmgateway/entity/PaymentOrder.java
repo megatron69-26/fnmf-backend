@@ -67,6 +67,21 @@ public class PaymentOrder {
     @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt = LocalDateTime.now();
 
+    @Column(name = "amount_vnd", precision = 18, scale = 0)
+    private BigDecimal amountVnd;
+
+    @Column(name = "exchange_rate_snapshot", precision = 18, scale = 4)
+    private BigDecimal exchangeRateSnapshot;
+
+    @Column(name = "provider_transaction_no", length = 100)
+    private String providerTransactionNo;
+
+    @Column(name = "provider_response_code", length = 50)
+    private String providerResponseCode;
+
+    @Column(name = "paid_at")
+    private LocalDateTime paidAt;
+
     @Column(name = "completed_at")
     private LocalDateTime completedAt;
 
@@ -207,5 +222,45 @@ public class PaymentOrder {
 
     public void setExpiresAt(LocalDateTime expiresAt) {
         this.expiresAt = expiresAt;
+    }
+
+    public BigDecimal getAmountVnd() {
+        return amountVnd;
+    }
+
+    public void setAmountVnd(BigDecimal amountVnd) {
+        this.amountVnd = amountVnd;
+    }
+
+    public BigDecimal getExchangeRateSnapshot() {
+        return exchangeRateSnapshot;
+    }
+
+    public void setExchangeRateSnapshot(BigDecimal exchangeRateSnapshot) {
+        this.exchangeRateSnapshot = exchangeRateSnapshot;
+    }
+
+    public String getProviderTransactionNo() {
+        return providerTransactionNo;
+    }
+
+    public void setProviderTransactionNo(String providerTransactionNo) {
+        this.providerTransactionNo = providerTransactionNo;
+    }
+
+    public String getProviderResponseCode() {
+        return providerResponseCode;
+    }
+
+    public void setProviderResponseCode(String providerResponseCode) {
+        this.providerResponseCode = providerResponseCode;
+    }
+
+    public LocalDateTime getPaidAt() {
+        return paidAt;
+    }
+
+    public void setPaidAt(LocalDateTime paidAt) {
+        this.paidAt = paidAt;
     }
 }

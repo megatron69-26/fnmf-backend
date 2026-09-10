@@ -59,7 +59,8 @@ public class ProductionProfileTest {
                 "/api/admin/db/overview",
                 "/admin.html",
                 "/admin.css",
-                "/admin.js"
+                "/admin.js",
+                "/vnpay-return.css"
         };
 
         for (String path : allowedPaths) {

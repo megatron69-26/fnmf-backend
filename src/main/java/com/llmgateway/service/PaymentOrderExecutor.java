@@ -28,6 +28,14 @@ public class PaymentOrderExecutor {
     public PaymentOrder createAndPersistOrder(Long userId, Long walletId, String clientRequestId,
                                               String providerName, PaymentType type,
                                               BigDecimal amount, String checkoutToken) {
+        return createAndPersistOrder(userId, walletId, clientRequestId, providerName, type, amount, checkoutToken, null, null);
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public PaymentOrder createAndPersistOrder(Long userId, Long walletId, String clientRequestId,
+                                              String providerName, PaymentType type,
+                                              BigDecimal amount, String checkoutToken,
+                                              BigDecimal amountVnd, BigDecimal exchangeRateSnapshot) {
         PaymentOrder order = new PaymentOrder(
                 userId,
                 walletId,
@@ -38,6 +46,8 @@ public class PaymentOrderExecutor {
                 PaymentStatus.PENDING,
                 checkoutToken
         );
+        order.setAmountVnd(amountVnd);
+        order.setExchangeRateSnapshot(exchangeRateSnapshot);
         return paymentOrderRepository.saveAndFlush(order);
     }
 }

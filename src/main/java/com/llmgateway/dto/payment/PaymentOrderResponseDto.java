@@ -7,6 +7,8 @@ public class PaymentOrderResponseDto {
     private Long paymentOrderId;
     private String type;
     private BigDecimal amountUsd;
+    private BigDecimal amountVnd;
+    private BigDecimal exchangeRateSnapshot;
     private String status;
     private String checkoutUrl;
     private String provider;
@@ -40,6 +42,22 @@ public class PaymentOrderResponseDto {
 
     public void setAmountUsd(BigDecimal amountUsd) {
         this.amountUsd = amountUsd;
+    }
+
+    public BigDecimal getAmountVnd() {
+        return amountVnd;
+    }
+
+    public void setAmountVnd(BigDecimal amountVnd) {
+        this.amountVnd = amountVnd;
+    }
+
+    public BigDecimal getExchangeRateSnapshot() {
+        return exchangeRateSnapshot;
+    }
+
+    public void setExchangeRateSnapshot(BigDecimal exchangeRateSnapshot) {
+        this.exchangeRateSnapshot = exchangeRateSnapshot;
     }
 
     public String getStatus() {

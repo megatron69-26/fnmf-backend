@@ -70,6 +70,79 @@ public class PaymentController {
         }
     }
 
+    public static String resolveClientIp(HttpServletRequest request) {
+        if (request == null) {
+            return "127.0.0.1";
+        }
+        // 1. Khi server.forward-headers-strategy=framework hoạt động,
+        // getRemoteAddr() đã được Spring framework chuẩn hóa từ proxy tin cậy.
+        String remote = request.getRemoteAddr();
+        if (remote != null && !remote.isBlank()) {
+            String candidate = remote.trim();
+            if (isValidIpAddress(candidate) && !"127.0.0.1".equals(candidate) && !"::1".equals(candidate)) {
+                return normalizeIp(candidate);
+            }
+        }
+
+        // 2. Kiểm tra X-Forwarded-For và X-Real-IP (chỉ hỗ trợ headers tiêu chuẩn, loại bỏ legacy Proxy-Client-IP)
+        String[] trustedHeaders = { "X-Forwarded-For", "X-Real-IP" };
+        for (String header : trustedHeaders) {
+            String raw = request.getHeader(header);
+            if (raw != null && !raw.isBlank() && !"unknown".equalsIgnoreCase(raw.trim())) {
+                String[] parts = raw.split(",");
+                for (String part : parts) {
+                    String candidate = part.trim();
+                    if (isValidIpAddress(candidate)) {
+                        return normalizeIp(candidate);
+                    }
+                }
+            }
+        }
+
+        // 3. Fallback về remoteAddr (kể cả 127.0.0.1) nếu hợp lệ
+        if (remote != null && !remote.isBlank() && isValidIpAddress(remote.trim())) {
+            return normalizeIp(remote.trim());
+        }
+
+        return "127.0.0.1";
+    }
+
+    public static boolean isValidIpAddress(String ip) {
+        if (ip == null || ip.isBlank() || ip.length() > 45) {
+            return false;
+        }
+        String trimmed = ip.trim();
+        if ("::1".equals(trimmed) || "0:0:0:0:0:0:0:1".equals(trimmed)) {
+            return true;
+        }
+        String[] parts = trimmed.split("\\.");
+        if (parts.length == 4) {
+            for (String p : parts) {
+                if (p.isEmpty() || p.length() > 3) return false;
+                try {
+                    int val = Integer.parseInt(p);
+                    if (val < 0 || val > 255) return false;
+                    if (p.length() > 1 && p.startsWith("0")) return false;
+                } catch (NumberFormatException e) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        if (trimmed.contains(":") && trimmed.matches("^[0-9a-fA-F:]+$")) {
+            return true;
+        }
+        return false;
+    }
+
+    private static String normalizeIp(String ip) {
+        String trimmed = ip.trim();
+        if ("::1".equals(trimmed) || "0:0:0:0:0:0:0:1".equals(trimmed)) {
+            return "127.0.0.1";
+        }
+        return trimmed;
+    }
+
     /**
      * POST /api/payments/deposits
      * Tạo yêu cầu nạp USD mô phỏng (Sandbox Deposit).
@@ -81,7 +154,8 @@ public class PaymentController {
             HttpServletRequest httpRequest) {
         Long userId = extractUserId(authHeader);
         String baseUrl = resolveBaseUrl(httpRequest);
-        PaymentOrderResponseDto response = paymentService.createDeposit(userId, request, baseUrl);
+        String clientIp = resolveClientIp(httpRequest);
+        PaymentOrderResponseDto response = paymentService.createDeposit(userId, request, baseUrl, clientIp);
         return ResponseEntity.ok(response);
     }
 
@@ -96,7 +170,8 @@ public class PaymentController {
             HttpServletRequest httpRequest) {
         Long userId = extractUserId(authHeader);
         String baseUrl = resolveBaseUrl(httpRequest);
-        PaymentOrderResponseDto response = paymentService.createWithdrawal(userId, request, baseUrl);
+        String clientIp = resolveClientIp(httpRequest);
+        PaymentOrderResponseDto response = paymentService.createWithdrawal(userId, request, baseUrl, clientIp);
         return ResponseEntity.ok(response);
     }
 

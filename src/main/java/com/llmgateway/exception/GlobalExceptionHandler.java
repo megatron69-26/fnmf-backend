@@ -128,6 +128,20 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * Cổng thanh toán ngoại vi không khả dụng (502 BAD_GATEWAY).
+     */
+    @ExceptionHandler(PaymentGatewayUnavailableException.class)
+    public ResponseEntity<Map<String, Object>> handlePaymentGatewayUnavailable(PaymentGatewayUnavailableException ex) {
+        log.error("Payment gateway unavailable: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(Map.of(
+                "status", "ERROR",
+                "code", "PAYMENT_GATEWAY_UNAVAILABLE",
+                "error", "Cổng thanh toán tạm thời không khả dụng. Vui lòng thử lại sau.",
+                "timestamp", Instant.now().toString()
+        ));
+    }
+
+    /**
      * Mọi RuntimeException khác (bao gồm lỗi từ OpenAI API).
      */
     @ExceptionHandler(RuntimeException.class)
