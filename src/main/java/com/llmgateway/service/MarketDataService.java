@@ -21,6 +21,7 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -39,6 +40,9 @@ public class MarketDataService {
 
     @Value("${alphavantage.api.url:https://www.alphavantage.co/query}")
     private String apiUrl;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private AiNewsService aiNewsService;
 
     // ====================================================================================
     // 🛡️ BỘ NHỚ ĐỆM (IN-MEMORY CACHE) THỜI GIAN THỰC (ZERO FAKE DATA)
@@ -155,21 +159,19 @@ public class MarketDataService {
 
     /**
      * Lấy dòng tin tức tài chính (News Feed) từ Alpha Vantage.
+     * Ưu tiên ủy quyền qua AiNewsService để dùng chung CSDL Cache tiếng Việt,
+     * cơ chế Single-Flight và Cooldown, tránh tiêu hao 25 requests/ngày.
      */
     public synchronized List<NewsFeedItemDto> getNewsFeed(int limit) {
-        long now = System.currentTimeMillis();
-        if (now - lastNewsFetchTime < NEWS_CACHE_TTL_MS && !newsFeedCache.isEmpty()) {
-            return newsFeedCache.stream().limit(limit > 0 ? limit : 10).toList();
+        if (aiNewsService != null) {
+            return aiNewsService.getLiveAiNewsFeed(null, limit);
         }
+        log.warn("AiNewsService chưa được liên kết, trả cache nội bộ để bảo toàn hạn mức 25 req/ngày");
+        return newsFeedCache.stream().limit(limit > 0 ? limit : 10).toList();
+    }
 
-        List<NewsFeedItemDto> items = fetchNewsFromApi(limit > 0 ? limit : 10);
-        if (!items.isEmpty()) {
-            newsFeedCache.clear();
-            newsFeedCache.addAll(items);
-            lastNewsFetchTime = now;
-        }
-
-        return newsFeedCache;
+    public void setAiNewsService(AiNewsService aiNewsService) {
+        this.aiNewsService = aiNewsService;
     }
 
     // =========================================================================
@@ -250,50 +252,8 @@ public class MarketDataService {
     }
 
     private List<NewsFeedItemDto> fetchNewsFromApi(int limit) {
-        List<NewsFeedItemDto> list = new ArrayList<>();
-        if (apiKey == null || apiKey.isBlank()) {
-            return list;
-        }
-        try {
-            String url = String.format("%s?function=NEWS_SENTIMENT&topics=financial_markets,technology&limit=%d&apikey=%s",
-                    apiUrl, limit > 0 ? limit : 10, apiKey);
-
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(url))
-                    .timeout(Duration.ofSeconds(10))
-                    .GET()
-                    .build();
-
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-
-            if (response.statusCode() == 200) {
-                JsonNode root = objectMapper.readTree(response.body());
-                JsonNode feed = root.path("feed");
-
-                if (feed.isArray()) {
-                    for (JsonNode node : feed) {
-                        String title = node.path("title").asText();
-                        String articleUrl = node.path("url").asText();
-                        String timePublished = node.path("time_published").asText();
-                        String summary = node.path("summary").asText();
-                        String bannerImage = node.path("banner_image").asText(null);
-                        String source = node.path("source").asText("Financial News");
-                        String category = node.path("category_within_source").asText("Market");
-                        String sentiment = node.path("overall_sentiment_label").asText("Neutral");
-                        Double score = node.path("overall_sentiment_score").asDouble(0.0);
-
-                        List<String> topics = new ArrayList<>();
-                        for (JsonNode t : node.path("topics")) {
-                            topics.add(t.path("topic").asText());
-                        }
-
-                        list.add(new NewsFeedItemDto(title, articleUrl, timePublished, summary, bannerImage, source, category, topics, sentiment, score));
-                    }
-                }
-            }
-        } catch (Exception e) {
-            log.warn("Lỗi khi tải News Feed từ Alpha Vantage: {}", e.getMessage());
-        }
-        return list;
+        // Khóa hoàn toàn đường gọi HTTP độc lập: MarketDataService ủy quyền duy nhất qua AiNewsService
+        log.debug("Khóa đường gọi Alpha Vantage độc lập trong MarketDataService để bảo toàn hạn mức");
+        return Collections.emptyList();
     }
 }

@@ -54,15 +54,23 @@
   1. Gioi han limit dong nhat tu 1 den 20 (`DEFAULT_LIMIT = 5`, `MAX_LIMIT = 20`). Ngoai pham vi tra ve HTTP 400 Bad Request.
   2. Alpha Vantage fetch toi da 50 bai (`MAX_ALPHA_FETCH = 50`, `Math.min(limit * 3, 50)`).
   3. Lay tin that tu Alpha Vantage (`NEWS_SENTIMENT`).
-  4. Dua qua Google Gemini AI (`gemini-2.5-flash`) voi System Prompt chuyen gia tai chinh de dich tieu de sang tieng Viet tu nhien va tom tat 2 den 4 gach dau dong su kien that.
+  4. Dua qua Google Gemini AI (`gemini-3.6-flash`) voi System Prompt chuyen gia tai chinh de dich tieu de sang tieng Viet tu nhien va tom tat 2 den 4 gach dau dong su kien that.
   5. Tu dong luu ket qua vao bang `NEWS_AI_CACHE` trong PostgreSQL.
   6. Tra ve bai bao hoan chinh (tieu de tieng Viet, 2-4 bullet tieng Viet, publisher, author, thoi gian, anh bia).
 * Co che bao ve:
-  * Cache CSDL PostgreSQL: Cac bai da co ban dich tieng Viet hop le duoc phuc vu truc tiep tu CSDL ma khong can goi lai Gemini AI.
-  * Xu ly loi va Graceful Degradation: Khi Alpha Vantage hoac Gemini gap su co:
+  * Cache CSDL PostgreSQL: Cac bai da co ban dich tieng Viet hop le duoc phuc vu truc tiep tu CSDL ma khong can goi lai Gemini AI. Cache freshness xac dinh DUY NHAT theo `analyzedAt` (thoi diem AI phan tich), khong fallback sang `publishedAt`.
+  * Dieu phoi AlphaNewsCoordinator & Single-Flight:
+    - Khoa `refreshLock` bao phu TOAN BO PIPELINE (Alpha fetch/snapshot reuse -> Gemini -> DB persist -> NewsSyncResult).
+    - Luu `CachedAlphaSnapshot` bat bien trong RAM (scope, status, rawItems, fetchedAt).
+    - Scope matching nghiem ngat: Snapshot BTC khong phuc vu ETH; Snapshot GLOBAL dung chung toan thi truong.
+    - Bao toan trang thai `SUCCESS_EMPTY`: Khi Alpha tra 200 feed=[], cache snapshot va replay `empty` trong 90 phut, khong bien thanh `degraded`.
+    - Gemini Failure Cooldown (10 phut): Khi Alpha thanh cong nhung Gemini loi, luu raw snapshot va dat cooldown 10 phut cho Gemini; request trong cooldown khong goi lai Gemini; het cooldown retry Gemini bang raw snapshot ma khong dot quota Alpha.
+  * Xu ly loi va Graceful Degradation:
     - Neu da co tin tieng Viet hop le trong Cache: tra ve tu Cache voi `status="ok"`.
     - Neu khong co Cache va Alpha khong co tin: tra ve `status="empty"` minh bach.
     - Neu khong co Cache va dich vu gap loi mang/rate limit/timeout: tra ve `status="degraded"` minh bach.
+    - Invariant bat buoc: `NewsSyncResult.ok` luon co data khong rong, cam tao `ok` voi danh sach rong/null o moi constructor va setter.
+    - Tuyet doi khong log hoac ro ri Alpha Vantage API key (Note, Information, Error Message, response body).
     - Tuyet doi khong dung Regex thay the tu ngu, khong dung Heuristic bia dat noi dung, khong sinh du lieu gia.
 * `POST /api/news/analyze`: Phan tich bai bao tuy chinh.
 

@@ -13,12 +13,18 @@ public class NewsSyncResult {
     }
 
     public NewsSyncResult(String status, String message, List<NewsFeedItemDto> items) {
+        if ("ok".equalsIgnoreCase(status) && (items == null || items.isEmpty())) {
+            throw new IllegalArgumentException("Không thể tạo NewsSyncResult với status 'ok' khi danh sách items rỗng. Yêu cầu ít nhất 1 bài viết.");
+        }
         this.status = status;
         this.message = message;
         this.items = items != null ? items : Collections.emptyList();
     }
 
     public static NewsSyncResult ok(List<NewsFeedItemDto> items) {
+        if (items == null || items.isEmpty()) {
+            throw new IllegalArgumentException("Không thể tạo NewsSyncResult với status 'ok' khi danh sách items rỗng. Yêu cầu ít nhất 1 bài viết.");
+        }
         return new NewsSyncResult("ok", null, items);
     }
 
@@ -35,6 +41,9 @@ public class NewsSyncResult {
     }
 
     public void setStatus(String status) {
+        if ("ok".equalsIgnoreCase(status) && (this.items == null || this.items.isEmpty())) {
+            throw new IllegalArgumentException("Không thể thiết lập status 'ok' khi danh sách items rỗng.");
+        }
         this.status = status;
     }
 
@@ -51,6 +60,9 @@ public class NewsSyncResult {
     }
 
     public void setItems(List<NewsFeedItemDto> items) {
+        if ("ok".equalsIgnoreCase(this.status) && (items == null || items.isEmpty())) {
+            throw new IllegalArgumentException("Không thể gán danh sách rỗng khi status đang là 'ok'.");
+        }
         this.items = items != null ? items : Collections.emptyList();
     }
 }

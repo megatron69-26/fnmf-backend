@@ -33,8 +33,30 @@ public class AlphaNewsFetchResult {
         return new AlphaNewsFetchResult(Status.SUCCESS_EMPTY, Collections.emptyList(), "Alpha Vantage returned no news items");
     }
 
-    public static AlphaNewsFetchResult unavailable(String reason) {
-        return new AlphaNewsFetchResult(Status.UNAVAILABLE, Collections.emptyList(), reason);
+    public static final String ALPHA_RATE_LIMITED = "ALPHA_RATE_LIMITED";
+    public static final String ALPHA_HTTP_ERROR = "ALPHA_HTTP_ERROR";
+    public static final String ALPHA_INVALID_RESPONSE = "ALPHA_INVALID_RESPONSE";
+    public static final String ALPHA_NETWORK_ERROR = "ALPHA_NETWORK_ERROR";
+
+    public static AlphaNewsFetchResult rateLimited() {
+        return new AlphaNewsFetchResult(Status.UNAVAILABLE, Collections.emptyList(), ALPHA_RATE_LIMITED);
+    }
+
+    public static AlphaNewsFetchResult httpError() {
+        return new AlphaNewsFetchResult(Status.UNAVAILABLE, Collections.emptyList(), ALPHA_HTTP_ERROR);
+    }
+
+    public static AlphaNewsFetchResult invalidResponse() {
+        return new AlphaNewsFetchResult(Status.UNAVAILABLE, Collections.emptyList(), ALPHA_INVALID_RESPONSE);
+    }
+
+    public static AlphaNewsFetchResult networkError() {
+        return new AlphaNewsFetchResult(Status.UNAVAILABLE, Collections.emptyList(), ALPHA_NETWORK_ERROR);
+    }
+
+    public static AlphaNewsFetchResult unavailable(String safeReason) {
+        String clean = (safeReason != null && !safeReason.isBlank()) ? safeReason.trim() : ALPHA_NETWORK_ERROR;
+        return new AlphaNewsFetchResult(Status.UNAVAILABLE, Collections.emptyList(), clean);
     }
 
     public Status getStatus() {

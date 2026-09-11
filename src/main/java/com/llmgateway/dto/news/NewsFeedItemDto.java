@@ -220,4 +220,14 @@ public class NewsFeedItemDto {
     public void setDisplaySummaryVi(String displaySummaryVi) {
         this.displaySummaryVi = displaySummaryVi;
     }
+
+    private String analyzedAt;
+
+    public String getAnalyzedAt() {
+        return analyzedAt;
+    }
+
+    public void setAnalyzedAt(String analyzedAt) {
+        this.analyzedAt = analyzedAt;
+    }
 }

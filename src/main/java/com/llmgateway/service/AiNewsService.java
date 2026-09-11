@@ -12,6 +12,7 @@ import com.llmgateway.entity.NewsAiCache;
 import com.llmgateway.repository.NewsAiCacheRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -43,26 +44,41 @@ public class AiNewsService {
     private String alphaVantageKey;
 
     @Value("${alphavantage.api.url:https://www.alphavantage.co/query}")
-    private String alphaVantageUrl;
+    private String alphaVantageUrl = "https://www.alphavantage.co/query";
 
     @Value("${openai.api.key:}")
     private String geminiApiKey;
 
     @Value("${openai.api.url:https://generativelanguage.googleapis.com/v1beta/openai/chat/completions}")
-    private String geminiApiUrl;
+    private String geminiApiUrl = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
 
-    @Value("${openai.default-model:gemini-2.5-flash}")
-    private String geminiModel;
+    @Value("${openai.default-model:gemini-3.6-flash}")
+    private String geminiModel = "gemini-3.6-flash";
+
+    private final AlphaNewsCoordinator alphaNewsCoordinator;
+
+    @Autowired
+    public AiNewsService(NewsCacheService newsCacheService,
+                         NewsAiCacheRepository newsAiCacheRepository,
+                         ObjectMapper objectMapper,
+                         AlphaNewsCoordinator alphaNewsCoordinator) {
+        this.newsCacheService = newsCacheService;
+        this.newsAiCacheRepository = newsAiCacheRepository;
+        this.objectMapper = objectMapper;
+        this.alphaNewsCoordinator = alphaNewsCoordinator != null ? alphaNewsCoordinator : new AlphaNewsCoordinator();
+        this.httpClient = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(10))
+                .build();
+    }
 
     public AiNewsService(NewsCacheService newsCacheService,
                          NewsAiCacheRepository newsAiCacheRepository,
                          ObjectMapper objectMapper) {
-        this.newsCacheService = newsCacheService;
-        this.newsAiCacheRepository = newsAiCacheRepository;
-        this.objectMapper = objectMapper;
-        this.httpClient = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(10))
-                .build();
+        this(newsCacheService, newsAiCacheRepository, objectMapper, new AlphaNewsCoordinator());
+    }
+
+    public AlphaNewsCoordinator getAlphaNewsCoordinator() {
+        return alphaNewsCoordinator;
     }
 
     public static final int DEFAULT_LIMIT = 5;
@@ -98,250 +114,374 @@ public class AiNewsService {
         if (!isValidLimit(limit)) {
             throw new IllegalArgumentException("Tham số limit phải nằm trong khoảng từ 1 đến " + MAX_LIMIT);
         }
-        int fetchCount = calculateAlphaFetchCount(limit);
-        AlphaNewsFetchResult alphaResult = fetchRealNewsFromAlphaVantage(symbol, fetchCount);
-        List<NewsFeedItemDto> enrichedList = new ArrayList<>();
 
-        if (alphaResult.getStatus() == AlphaNewsFetchResult.Status.SUCCESS_WITH_ITEMS) {
-            for (NewsFeedItemDto rawItem : alphaResult.getItems()) {
-                final String rawOriginalTitle = (rawItem.getOriginalTitle() != null && !rawItem.getOriginalTitle().isBlank())
-                        ? rawItem.getOriginalTitle()
-                        : rawItem.getTitle();
-                final String url = rawItem.getUrl();
-                final String rawSource = rawItem.getSource();
-                final String rawSummary = rawItem.getSummary();
+        final String requestedScope = AlphaNewsCoordinator.normalizeScope(symbol);
 
-                // 1. Kiểm tra CSDL trước qua NewsCacheService (Tối ưu chi phí & độ trễ)
-                Optional<NewsAiCache> cachedOpt = Optional.empty();
-                if (url != null && !url.isBlank()) {
-                    cachedOpt = newsCacheService.findByArticleUrl(url);
+        // 1. Kiểm tra cache PostgreSQL tiếng Việt hợp lệ hiện có
+        List<NewsFeedItemDto> cachedItems = getValidLocalizedCacheItems(symbol, limit);
+
+        // 2. Nếu cache tiếng Việt có bài và còn mới (trong vòng 90 phút theo analyzedAt) -> Trả ngay
+        if (isCacheFresh(cachedItems)) {
+            log.info("Sử dụng cache tin tức tiếng Việt PostgreSQL còn mới (trong vòng {} phút), không cần gọi Alpha Vantage",
+                    alphaNewsCoordinator.getRefreshIntervalMinutes());
+            return NewsSyncResult.ok(cachedItems);
+        }
+
+        // 3. Nếu đang trong thời gian Cooldown lỗi của Alpha Vantage
+        if (alphaNewsCoordinator.isInCooldown()) {
+            if (!cachedItems.isEmpty()) {
+                log.warn("Alpha Vantage đang trong thời gian cooldown ({}), trả cache tiếng Việt hiện có",
+                        alphaNewsCoordinator.getLastFailureCode());
+                return NewsSyncResult.ok(cachedItems);
+            }
+            return NewsSyncResult.degraded("Dịch vụ xử lý tin tức tạm thời chưa sẵn sàng");
+        }
+
+        // 4. Cơ chế Single-Flight bao phủ TOÀN BỘ PIPELINE:
+        // Alpha fetch / snapshot reuse -> Gemini processing -> validate -> persist PostgreSQL -> tạo NewsSyncResult.
+        // Không thả lock trước khi hoàn tất toàn bộ pipeline để tránh trùng lặp Gemini & DB.
+        boolean lockAcquired = alphaNewsCoordinator.tryAcquireRefresh();
+        if (!lockAcquired) {
+            if (!cachedItems.isEmpty()) {
+                log.info("Request đồng thời đang làm mới dữ liệu, trả cache tiếng Việt hiện có cho luồng này");
+                return NewsSyncResult.ok(cachedItems);
+            }
+            return NewsSyncResult.degraded("Dịch vụ xử lý tin tức tạm thời chưa sẵn sàng");
+        }
+
+        try {
+            // Re-check cache sau khi có lock (trong trường hợp luồng trước vừa hoàn tất ghi DB)
+            cachedItems = getValidLocalizedCacheItems(symbol, limit);
+            if (isCacheFresh(cachedItems)) {
+                return NewsSyncResult.ok(cachedItems);
+            }
+
+            // Kiểm tra snapshot Alpha trong RAM
+            AlphaNewsCoordinator.CachedAlphaSnapshot snapshot = alphaNewsCoordinator.getCachedSnapshot();
+            List<NewsFeedItemDto> rawItemsToProcess = null;
+            boolean needAlphaFetch = true;
+
+            if (snapshot != null && snapshot.isFresh(alphaNewsCoordinator.getClock(), alphaNewsCoordinator.getRefreshIntervalMinutes())
+                    && snapshot.matchesScope(requestedScope)) {
+
+                if (snapshot.getStatus() == AlphaNewsFetchResult.Status.SUCCESS_EMPTY) {
+                    log.info("Snapshot Alpha xác nhận thị trường không có tin tức cho scope {}, replay empty", snapshot.getScope());
+                    if (!cachedItems.isEmpty()) {
+                        return NewsSyncResult.ok(cachedItems);
+                    }
+                    return NewsSyncResult.empty("Chưa có bản tin mới");
                 }
-                if (cachedOpt.isEmpty() && rawOriginalTitle != null) {
-                    cachedOpt = newsCacheService.findByTitle(rawOriginalTitle);
+
+                if (snapshot.getStatus() == AlphaNewsFetchResult.Status.SUCCESS_WITH_ITEMS) {
+                    if (alphaNewsCoordinator.isGeminiInCooldown()) {
+                        log.warn("Gemini đang trong thời gian cooldown sau lỗi trước đó, không gọi lại Gemini");
+                        if (!cachedItems.isEmpty()) {
+                            return NewsSyncResult.ok(cachedItems);
+                        }
+                        return NewsSyncResult.degraded("Dịch vụ xử lý tin tức tạm thời chưa sẵn sàng");
+                    }
+                    log.info("Tái sử dụng raw feed Alpha Vantage ({}) từ bộ nhớ để xử lý qua Gemini, không gọi lại provider", snapshot.getScope());
+                    rawItemsToProcess = snapshot.getRawItems();
+                    needAlphaFetch = false;
+                }
+            }
+
+            if (needAlphaFetch) {
+                int fetchCount = calculateAlphaFetchCount(limit);
+                AlphaNewsFetchResult alphaResult = fetchRealNewsFromAlphaVantage(symbol, fetchCount);
+
+                if (alphaResult.getStatus() == AlphaNewsFetchResult.Status.UNAVAILABLE) {
+                    alphaNewsCoordinator.recordFailure(alphaResult.getMessage());
+                    if (!cachedItems.isEmpty()) {
+                        return NewsSyncResult.ok(cachedItems);
+                    }
+                    return NewsSyncResult.degraded("Dịch vụ xử lý tin tức tạm thời chưa sẵn sàng");
                 }
 
-                boolean isCacheLocalized = false;
-                if (cachedOpt.isPresent()) {
-                    NewsAiCache cached = cachedOpt.get();
-                    String cachedOrig = (cached.getOriginalTitle() != null && !cached.getOriginalTitle().isBlank())
-                            ? cached.getOriginalTitle()
-                            : cached.getTitle();
-                    String bulletsToParse = (cached.getBulletPointsVi() != null && !cached.getBulletPointsVi().isBlank())
-                            ? cached.getBulletPointsVi()
-                            : cached.getSummaryPoints();
-                    List<String> rawBullets = parseSummaryPoints(bulletsToParse);
-                    List<String> sanitizedBullets = NewsSummaryQualityPolicy.sanitizeBullets(rawBullets, cachedOrig, cached.getOriginalSummary());
-
-                    if (NewsLocalizationQualityPolicy.isFullyLocalized(
-                            cached.getDisplayTitleVi(),
-                            cachedOrig,
-                            sanitizedBullets)) {
-                        isCacheLocalized = true;
+                if (alphaResult.getStatus() == AlphaNewsFetchResult.Status.SUCCESS_EMPTY) {
+                    alphaNewsCoordinator.recordAlphaSnapshot(requestedScope, AlphaNewsFetchResult.Status.SUCCESS_EMPTY, Collections.emptyList());
+                    if (!cachedItems.isEmpty()) {
+                        return NewsSyncResult.ok(cachedItems);
                     }
+                    return NewsSyncResult.empty("Chưa có bản tin mới");
                 }
 
-                if (isCacheLocalized) {
-                    // Đã có trong CSDL Cache với bản dịch tiếng Việt hợp lệ -> Nạp trực tiếp từ CSDL
-                    NewsAiCache cached = cachedOpt.get();
-                    String publisher = NewsPublisherResolver.resolvePublisher(cached.getSource(), url);
-                    if (publisher == null || NewsPublisherResolver.isGeneric(publisher)) {
-                        publisher = "";
+                // SUCCESS_WITH_ITEMS
+                alphaNewsCoordinator.recordAlphaSnapshot(requestedScope, AlphaNewsFetchResult.Status.SUCCESS_WITH_ITEMS, alphaResult.getItems());
+                rawItemsToProcess = alphaResult.getItems();
+            }
+
+            List<NewsFeedItemDto> enrichedList = new ArrayList<>();
+            if (rawItemsToProcess != null && !rawItemsToProcess.isEmpty()) {
+                for (NewsFeedItemDto rawItem : rawItemsToProcess) {
+                    final String rawOriginalTitle = (rawItem.getOriginalTitle() != null && !rawItem.getOriginalTitle().isBlank())
+                            ? rawItem.getOriginalTitle()
+                            : rawItem.getTitle();
+                    final String url = rawItem.getUrl();
+                    final String rawSource = rawItem.getSource();
+                    final String rawSummary = rawItem.getSummary();
+
+                    // Kiểm tra CSDL trước qua NewsCacheService (Tối ưu chi phí & độ trễ)
+                    Optional<NewsAiCache> cachedOpt = Optional.empty();
+                    if (url != null && !url.isBlank()) {
+                        cachedOpt = newsCacheService.findByArticleUrl(url);
                     }
-                    String cachedOrigTitle = (cached.getOriginalTitle() != null && !cached.getOriginalTitle().isBlank())
-                            ? cached.getOriginalTitle()
-                            : cached.getTitle();
-                    String cachedOrigSummary = (cached.getOriginalSummary() != null && !cached.getOriginalSummary().isBlank())
-                            ? cached.getOriginalSummary()
-                            : (rawSummary != null && !rawSummary.isBlank() ? rawSummary : cached.getTitle());
-                    String displayTitle = cached.getDisplayTitleVi();
-
-                    String bulletsToParse = (cached.getBulletPointsVi() != null && !cached.getBulletPointsVi().isBlank())
-                            ? cached.getBulletPointsVi()
-                            : cached.getSummaryPoints();
-                    List<String> rawBullets = parseSummaryPoints(bulletsToParse);
-                    List<String> sanitizedBullets = NewsSummaryQualityPolicy.sanitizeBullets(rawBullets, cachedOrigTitle, cachedOrigSummary);
-
-                    String displaySummary = (cached.getDisplaySummaryVi() != null && !cached.getDisplaySummaryVi().isBlank())
-                            ? cached.getDisplaySummaryVi()
-                            : ((sanitizedBullets != null && !sanitizedBullets.isEmpty()) ? String.join(" ", sanitizedBullets) : null);
-
-                    rawItem.setOriginalTitle(cachedOrigTitle); // Luôn là tiêu đề gốc nguyên văn
-                    rawItem.setOriginalSummary(cachedOrigSummary); // Summary gốc nguyên văn tiếng Anh
-                    rawItem.setDisplayTitleVi(displayTitle); // Bản dịch tiếng Việt
-                    rawItem.setDisplaySummaryVi(displaySummary); // Đoạn tóm tắt giới thiệu tiếng Việt
-                    rawItem.setTitle(displayTitle); // Tương thích ngược với client Android
-                    rawItem.setSummary(displaySummary); // Tuyệt đối KHÔNG gán summary tiếng Anh vào summary hiển thị
-                    rawItem.setSource(publisher);
-                    rawItem.setPublisher(publisher);
-
-                    rawItem.setAiSummary(sanitizedBullets);
-                    rawItem.setBulletPointsVi(sanitizedBullets);
-                    rawItem.setAiSentiment(cached.getSentiment());
-                    rawItem.setAiConfidence(cached.getConfidencePct() != null ? cached.getConfidencePct().intValue() : 85);
-                    rawItem.setAiReason(cached.getReason());
-                    rawItem.setFromCache(true);
-                    if (cached.getAuthor() != null && !cached.getAuthor().isBlank() && (rawItem.getAuthor() == null || rawItem.getAuthor().isBlank())) {
-                        rawItem.setAuthor(cached.getAuthor());
+                    if (cachedOpt.isEmpty() && rawOriginalTitle != null) {
+                        cachedOpt = newsCacheService.findByTitle(rawOriginalTitle);
                     }
-                    if (cached.getBannerImage() != null && !cached.getBannerImage().isBlank() && (rawItem.getBannerImage() == null || rawItem.getBannerImage().isBlank())) {
-                        rawItem.setBannerImage(cached.getBannerImage());
-                    }
-                    enrichedList.add(rawItem);
-                } else {
-                    // Bài mới hoặc bản ghi cache cũ thiếu displayTitleVi -> Gọi Gemini làm giàu
-                    NewsAnalysisRequest aiReq = new NewsAnalysisRequest(rawOriginalTitle, rawSummary, symbol, url);
-                    Optional<NewsAnalysisResponse> aiResOpt = analyzeWithGemini(aiReq);
 
-                    if (aiResOpt.isPresent()) {
-                        NewsAnalysisResponse aiRes = aiResOpt.get();
-                        String displayTitle = aiRes.getDisplayTitleVi();
-                        List<String> bullets = aiRes.getSummary();
-                        String displaySummary = (aiRes.getDisplaySummaryVi() != null && !aiRes.getDisplaySummaryVi().isBlank())
-                                ? aiRes.getDisplaySummaryVi()
-                                : ((bullets != null && !bullets.isEmpty()) ? String.join(" ", bullets) : null);
-                        String publisher = NewsPublisherResolver.resolvePublisher(rawSource, url);
+                    boolean isCacheLocalized = false;
+                    if (cachedOpt.isPresent()) {
+                        NewsAiCache cached = cachedOpt.get();
+                        String cachedOrig = (cached.getOriginalTitle() != null && !cached.getOriginalTitle().isBlank())
+                                ? cached.getOriginalTitle()
+                                : cached.getTitle();
+                        String bulletsToParse = (cached.getBulletPointsVi() != null && !cached.getBulletPointsVi().isBlank())
+                                ? cached.getBulletPointsVi()
+                                : cached.getSummaryPoints();
+                        List<String> rawBullets = parseSummaryPoints(bulletsToParse);
+                        List<String> sanitizedBullets = NewsSummaryQualityPolicy.sanitizeBullets(rawBullets, cachedOrig, cached.getOriginalSummary());
+
+                        if (NewsLocalizationQualityPolicy.isFullyLocalized(
+                                cached.getDisplayTitleVi(),
+                                cachedOrig,
+                                sanitizedBullets)) {
+                            isCacheLocalized = true;
+                        }
+                    }
+
+                    if (isCacheLocalized) {
+                        NewsAiCache cached = cachedOpt.get();
+                        String publisher = NewsPublisherResolver.resolvePublisher(cached.getSource(), url);
                         if (publisher == null || NewsPublisherResolver.isGeneric(publisher)) {
                             publisher = "";
                         }
+                        String cachedOrigTitle = (cached.getOriginalTitle() != null && !cached.getOriginalTitle().isBlank())
+                                ? cached.getOriginalTitle()
+                                : cached.getTitle();
+                        String cachedOrigSummary = (cached.getOriginalSummary() != null && !cached.getOriginalSummary().isBlank())
+                                ? cached.getOriginalSummary()
+                                : (rawSummary != null && !rawSummary.isBlank() ? rawSummary : cached.getTitle());
+                        String displayTitle = cached.getDisplayTitleVi();
 
-                        boolean fullyLocalized = NewsLocalizationQualityPolicy.isFullyLocalized(
-                                displayTitle,
-                                rawOriginalTitle,
-                                bullets
-                        );
+                        String bulletsToParse = (cached.getBulletPointsVi() != null && !cached.getBulletPointsVi().isBlank())
+                                ? cached.getBulletPointsVi()
+                                : cached.getSummaryPoints();
+                        List<String> rawBullets = parseSummaryPoints(bulletsToParse);
+                        List<String> sanitizedBullets = NewsSummaryQualityPolicy.sanitizeBullets(rawBullets, cachedOrigTitle, cachedOrigSummary);
 
-                        if (fullyLocalized) {
-                            rawItem.setOriginalTitle(rawOriginalTitle); // Bảo toàn nguyên văn tiêu đề Alpha Vantage
-                            rawItem.setOriginalSummary(rawSummary); // Bảo toàn summary gốc tiếng Anh
-                            rawItem.setDisplayTitleVi(displayTitle); // Bản dịch tiếng Việt
-                            rawItem.setDisplaySummaryVi(displaySummary); // Tóm tắt tiếng Việt ngắn
-                            rawItem.setTitle(displayTitle); // Tương thích ngược
-                            rawItem.setSummary(displaySummary); // UI chỉ nhận tiếng Việt
-                            rawItem.setSource(publisher);
-                            rawItem.setPublisher(publisher);
-                            rawItem.setAiSummary(bullets);
-                            rawItem.setBulletPointsVi(bullets);
-                            rawItem.setAiSentiment(aiRes.getSentiment());
-                            rawItem.setAiConfidence(aiRes.getConfidence());
-                            rawItem.setAiReason(aiRes.getReason());
-                            rawItem.setFromCache(false);
+                        String displaySummary = (cached.getDisplaySummaryVi() != null && !cached.getDisplaySummaryVi().isBlank())
+                                ? cached.getDisplaySummaryVi()
+                                : ((sanitizedBullets != null && !sanitizedBullets.isEmpty()) ? String.join(" ", sanitizedBullets) : null);
 
-                            // Lưu/Cập nhật cache độc lập giữ nguyên originalTitle & originalSummary
-                            LocalDateTime pubDate = parseAlphaVantageTimestamp(rawItem.getTimePublished());
-                            try {
-                                newsCacheService.saveCachedArticle(
-                                        url,
-                                        rawOriginalTitle, // title là rawOriginalTitle
-                                        symbol,
-                                        objectMapper.writeValueAsString(rawItem.getAiSummary()),
-                                        rawItem.getAiSentiment(),
-                                        BigDecimal.valueOf(rawItem.getAiConfidence() != null ? rawItem.getAiConfidence() : 85),
-                                        rawItem.getAiReason(),
-                                        pubDate,
-                                        LocalDateTime.now(),
-                                        rawItem.getAuthor(),
-                                        rawSource,
-                                        rawSummary,
-                                        rawItem.getBannerImage(),
-                                        rawOriginalTitle, // originalTitle độc lập
-                                        displayTitle, // displayTitleVi độc lập
-                                        displaySummary, // displaySummaryVi độc lập
-                                        objectMapper.writeValueAsString(rawItem.getBulletPointsVi())
-                                );
-                            } catch (Exception e) {
-                                log.warn("Không thể lưu cache: {}", e.getMessage());
-                            }
-                            enrichedList.add(rawItem);
-                        } else {
-                            log.warn("Gemini xử lý tiêu đề/bullet chưa đạt chuẩn tiếng Việt, bỏ qua bài: {}", rawOriginalTitle);
+                        rawItem.setOriginalTitle(cachedOrigTitle);
+                        rawItem.setOriginalSummary(cachedOrigSummary);
+                        rawItem.setDisplayTitleVi(displayTitle);
+                        rawItem.setDisplaySummaryVi(displaySummary);
+                        rawItem.setTitle(displayTitle);
+                        rawItem.setSummary(displaySummary);
+                        rawItem.setSource(publisher);
+                        rawItem.setPublisher(publisher);
+
+                        rawItem.setAiSummary(sanitizedBullets);
+                        rawItem.setBulletPointsVi(sanitizedBullets);
+                        rawItem.setAiSentiment(cached.getSentiment());
+                        rawItem.setAiConfidence(cached.getConfidencePct() != null ? cached.getConfidencePct().intValue() : 85);
+                        rawItem.setAiReason(cached.getReason());
+                        rawItem.setFromCache(true);
+                        rawItem.setAnalyzedAt(cached.getAnalyzedAt() != null ? cached.getAnalyzedAt().toString() : null);
+                        if (cached.getAuthor() != null && !cached.getAuthor().isBlank() && (rawItem.getAuthor() == null || rawItem.getAuthor().isBlank())) {
+                            rawItem.setAuthor(cached.getAuthor());
                         }
+                        if (cached.getBannerImage() != null && !cached.getBannerImage().isBlank() && (rawItem.getBannerImage() == null || rawItem.getBannerImage().isBlank())) {
+                            rawItem.setBannerImage(cached.getBannerImage());
+                        }
+                        enrichedList.add(rawItem);
                     } else {
-                        log.warn("Gemini API xử lý thất bại hoặc không khả dụng, bỏ qua bài: {}", rawOriginalTitle);
+                        NewsAnalysisRequest aiReq = new NewsAnalysisRequest(rawOriginalTitle, rawSummary, symbol, url);
+                        Optional<NewsAnalysisResponse> aiResOpt = analyzeWithGemini(aiReq);
+
+                        if (aiResOpt.isPresent()) {
+                            NewsAnalysisResponse aiRes = aiResOpt.get();
+                            String displayTitle = aiRes.getDisplayTitleVi();
+                            List<String> bullets = aiRes.getSummary();
+                            String displaySummary = (aiRes.getDisplaySummaryVi() != null && !aiRes.getDisplaySummaryVi().isBlank())
+                                    ? aiRes.getDisplaySummaryVi()
+                                    : ((bullets != null && !bullets.isEmpty()) ? String.join(" ", bullets) : null);
+                            String publisher = NewsPublisherResolver.resolvePublisher(rawSource, url);
+                            if (publisher == null || NewsPublisherResolver.isGeneric(publisher)) {
+                                publisher = "";
+                            }
+
+                            boolean fullyLocalized = NewsLocalizationQualityPolicy.isFullyLocalized(
+                                    displayTitle,
+                                    rawOriginalTitle,
+                                    bullets
+                            );
+
+                            if (fullyLocalized) {
+                                rawItem.setOriginalTitle(rawOriginalTitle);
+                                rawItem.setOriginalSummary(rawSummary);
+                                rawItem.setDisplayTitleVi(displayTitle);
+                                rawItem.setDisplaySummaryVi(displaySummary);
+                                rawItem.setTitle(displayTitle);
+                                rawItem.setSummary(displaySummary);
+                                rawItem.setSource(publisher);
+                                rawItem.setPublisher(publisher);
+                                rawItem.setAiSummary(bullets);
+                                rawItem.setBulletPointsVi(bullets);
+                                rawItem.setAiSentiment(aiRes.getSentiment());
+                                rawItem.setAiConfidence(aiRes.getConfidence());
+                                rawItem.setAiReason(aiRes.getReason());
+                                rawItem.setFromCache(false);
+                                LocalDateTime nowTime = LocalDateTime.now(alphaNewsCoordinator.getClock());
+                                rawItem.setAnalyzedAt(nowTime.toString());
+
+                                LocalDateTime pubDate = parseAlphaVantageTimestamp(rawItem.getTimePublished());
+                                try {
+                                    newsCacheService.saveCachedArticle(
+                                            url,
+                                            rawOriginalTitle,
+                                            symbol,
+                                            objectMapper.writeValueAsString(rawItem.getAiSummary()),
+                                            rawItem.getAiSentiment(),
+                                            BigDecimal.valueOf(rawItem.getAiConfidence() != null ? rawItem.getAiConfidence() : 85),
+                                            rawItem.getAiReason(),
+                                            pubDate,
+                                            nowTime,
+                                            rawItem.getAuthor(),
+                                            rawSource,
+                                            rawSummary,
+                                            rawItem.getBannerImage(),
+                                            rawOriginalTitle,
+                                            displayTitle,
+                                            displaySummary,
+                                            objectMapper.writeValueAsString(rawItem.getBulletPointsVi())
+                                    );
+                                } catch (Exception e) {
+                                    log.warn("Không thể lưu cache: {}", e.getMessage());
+                                }
+                                enrichedList.add(rawItem);
+                            } else {
+                                log.warn("Gemini xử lý tiêu đề/bullet chưa đạt chuẩn tiếng Việt, bỏ qua bài: {}", rawOriginalTitle);
+                            }
+                        } else {
+                            log.warn("Gemini API xử lý thất bại hoặc không khả dụng, bỏ qua bài: {}", rawOriginalTitle);
+                        }
+                    }
+
+                    if (enrichedList.size() >= limit) {
+                        break;
                     }
                 }
+            }
 
-                if (enrichedList.size() >= limit) {
-                    break;
-                }
+            if (!enrichedList.isEmpty()) {
+                alphaNewsCoordinator.recordPipelineSuccess();
+                alphaNewsCoordinator.recordGeminiSuccess();
+                return NewsSyncResult.ok(enrichedList);
+            }
+
+            // Nếu có raw items mà không có bài nào enriched (Gemini lỗi toàn bộ)
+            if (rawItemsToProcess != null && !rawItemsToProcess.isEmpty()) {
+                alphaNewsCoordinator.recordGeminiFailure();
+            }
+
+            // Fallback sang cache CSDL nếu có
+            List<NewsFeedItemDto> fallbackCache = getValidLocalizedCacheItems(symbol, limit);
+            if (!fallbackCache.isEmpty()) {
+                return NewsSyncResult.ok(fallbackCache);
+            }
+
+            return NewsSyncResult.degraded("Dịch vụ xử lý tin tức tạm thời chưa sẵn sàng");
+        } finally {
+            alphaNewsCoordinator.releaseRefresh();
+        }
+    }
+
+    public List<NewsFeedItemDto> getValidLocalizedCacheItems(String symbol, int limit) {
+        List<NewsFeedItemDto> validList = new ArrayList<>();
+        List<NewsAiCache> cachedList = (symbol != null && !symbol.isBlank())
+                ? newsCacheService.findBySymbolOrderByPublishedAtDesc(symbol.toUpperCase(), limit * 3)
+                : newsCacheService.findTopByOrderByPublishedAtDesc(limit * 3);
+        if (cachedList.isEmpty()) {
+            cachedList = newsCacheService.findTopByOrderByPublishedAtDesc(limit * 3);
+        }
+        if (cachedList.isEmpty()) {
+            cachedList = newsCacheService.findAll(limit * 3);
+        }
+        for (NewsAiCache c : cachedList) {
+            String cOrigTitle = (c.getOriginalTitle() != null && !c.getOriginalTitle().isBlank())
+                    ? c.getOriginalTitle()
+                    : c.getTitle();
+            String cOrigSummary = (c.getOriginalSummary() != null && !c.getOriginalSummary().isBlank())
+                    ? c.getOriginalSummary()
+                    : c.getTitle();
+            String publisher = NewsPublisherResolver.resolvePublisher(c.getSource(), c.getArticleUrl());
+            if (publisher == null || NewsPublisherResolver.isGeneric(publisher)) {
+                publisher = "";
+            }
+            String bulletsToParse = (c.getBulletPointsVi() != null && !c.getBulletPointsVi().isBlank())
+                    ? c.getBulletPointsVi()
+                    : c.getSummaryPoints();
+            List<String> rawBullets = parseSummaryPoints(bulletsToParse);
+            List<String> sanitizedBullets = NewsSummaryQualityPolicy.sanitizeBullets(rawBullets, cOrigTitle, cOrigSummary);
+
+            String displaySummary = (c.getDisplaySummaryVi() != null && !c.getDisplaySummaryVi().isBlank())
+                    ? c.getDisplaySummaryVi()
+                    : ((sanitizedBullets != null && !sanitizedBullets.isEmpty()) ? String.join(" ", sanitizedBullets) : null);
+
+            if (NewsLocalizationQualityPolicy.isFullyLocalized(
+                    c.getDisplayTitleVi(),
+                    cOrigTitle,
+                    sanitizedBullets)) {
+                NewsFeedItemDto dto = new NewsFeedItemDto();
+                dto.setOriginalTitle(cOrigTitle);
+                dto.setOriginalSummary(cOrigSummary);
+                dto.setDisplayTitleVi(c.getDisplayTitleVi());
+                dto.setDisplaySummaryVi(displaySummary);
+                dto.setTitle(c.getDisplayTitleVi());
+                dto.setSummary(displaySummary);
+                dto.setUrl(c.getArticleUrl());
+                dto.setTimePublished(c.getPublishedAt() != null ? c.getPublishedAt().toString() : "");
+                dto.setSource(publisher);
+                dto.setPublisher(publisher);
+                dto.setBannerImage(c.getBannerImage());
+                dto.setAuthor(c.getAuthor());
+                dto.setCategory("Market");
+                dto.setAiSummary(sanitizedBullets);
+                dto.setBulletPointsVi(sanitizedBullets);
+                dto.setAiSentiment(c.getSentiment());
+                dto.setAiConfidence(c.getConfidencePct() != null ? c.getConfidencePct().intValue() : 85);
+                dto.setAiReason(c.getReason());
+                dto.setFromCache(true);
+                dto.setAnalyzedAt(c.getAnalyzedAt() != null ? c.getAnalyzedAt().toString() : null);
+                validList.add(dto);
+                if (validList.size() >= limit) break;
             }
         }
+        return validList;
+    }
 
-        // Nếu danh sách bài từ Alpha Vantage rỗng hoặc không có bài nào dịch được, nạp các bài đã có bản dịch hợp lệ từ Cache
-        if (enrichedList.isEmpty()) {
-            log.info("Không có bài mới từ Alpha Vantage hoặc chưa dịch được, tự động tìm tin đã có tiếng Việt trong Cache CSDL...");
-            List<NewsAiCache> cachedList = (symbol != null && !symbol.isBlank())
-                    ? newsCacheService.findBySymbolOrderByPublishedAtDesc(symbol.toUpperCase(), limit * 3)
-                    : newsCacheService.findTopByOrderByPublishedAtDesc(limit * 3);
-            if (cachedList.isEmpty()) {
-                cachedList = newsCacheService.findTopByOrderByPublishedAtDesc(limit * 3);
-            }
-            if (cachedList.isEmpty()) {
-                cachedList = newsCacheService.findAll(limit * 3);
-            }
-            for (NewsAiCache c : cachedList) {
-                String cOrigTitle = (c.getOriginalTitle() != null && !c.getOriginalTitle().isBlank())
-                        ? c.getOriginalTitle()
-                        : c.getTitle();
-                String cOrigSummary = (c.getOriginalSummary() != null && !c.getOriginalSummary().isBlank())
-                        ? c.getOriginalSummary()
-                        : c.getTitle();
-                String publisher = NewsPublisherResolver.resolvePublisher(c.getSource(), c.getArticleUrl());
-                if (publisher == null || NewsPublisherResolver.isGeneric(publisher)) {
-                    publisher = "";
-                }
-                String bulletsToParse = (c.getBulletPointsVi() != null && !c.getBulletPointsVi().isBlank())
-                        ? c.getBulletPointsVi()
-                        : c.getSummaryPoints();
-                List<String> rawBullets = parseSummaryPoints(bulletsToParse);
-                List<String> sanitizedBullets = NewsSummaryQualityPolicy.sanitizeBullets(rawBullets, cOrigTitle, cOrigSummary);
-
-                String displaySummary = (c.getDisplaySummaryVi() != null && !c.getDisplaySummaryVi().isBlank())
-                        ? c.getDisplaySummaryVi()
-                        : ((sanitizedBullets != null && !sanitizedBullets.isEmpty()) ? String.join(" ", sanitizedBullets) : null);
-
-                if (NewsLocalizationQualityPolicy.isFullyLocalized(
-                        c.getDisplayTitleVi(),
-                        cOrigTitle,
-                        sanitizedBullets)) {
-                    NewsFeedItemDto dto = new NewsFeedItemDto();
-                    dto.setOriginalTitle(cOrigTitle);
-                    dto.setOriginalSummary(cOrigSummary);
-                    dto.setDisplayTitleVi(c.getDisplayTitleVi());
-                    dto.setDisplaySummaryVi(displaySummary);
-                    dto.setTitle(c.getDisplayTitleVi());
-                    dto.setSummary(displaySummary); // Tuyệt đối KHÔNG gán cOrigSummary tiếng Anh
-                    dto.setUrl(c.getArticleUrl());
-                    dto.setTimePublished(c.getPublishedAt() != null ? c.getPublishedAt().toString() : "");
-                    dto.setSource(publisher);
-                    dto.setPublisher(publisher);
-                    dto.setBannerImage(c.getBannerImage());
-                    dto.setAuthor(c.getAuthor());
-                    dto.setCategory("Market");
-                    dto.setAiSummary(sanitizedBullets);
-                    dto.setBulletPointsVi(sanitizedBullets);
-                    dto.setAiSentiment(c.getSentiment());
-                    dto.setAiConfidence(c.getConfidencePct() != null ? c.getConfidencePct().intValue() : 85);
-                    dto.setAiReason(c.getReason());
-                    dto.setFromCache(true);
-                    enrichedList.add(dto);
-                    if (enrichedList.size() >= limit) break;
-                }
-            }
+    public boolean isCacheFresh(List<NewsFeedItemDto> cacheList) {
+        // Invariant 1: Tuyệt đối không coi cache rỗng là fresh
+        if (cacheList == null || cacheList.isEmpty()) {
+            return false;
         }
 
-        // Quy tắc phân định trạng thái chính xác:
-        // 1. Có cache tiếng Việt hợp lệ -> status=ok, kể cả provider đang lỗi
-        if (!enrichedList.isEmpty()) {
-            return NewsSyncResult.ok(enrichedList);
+        // Invariant 2: Xác định độ mới DUY NHẤT theo analyzedAt (thời điểm backend phân tích/lưu cache).
+        // Tuyệt đối không fallback sang publishedAt/timePublished vì tin cũ vẫn có thể vừa phân tích,
+        // và cache thiếu analyzedAt phải coi là STALE.
+        String firstAnalyzedAt = cacheList.get(0).getAnalyzedAt();
+        if (firstAnalyzedAt == null || firstAnalyzedAt.isBlank()) {
+            return false;
         }
-
-        // 2. Alpha SUCCESS_EMPTY + không có cache hợp lệ -> status=empty
-        if (alphaResult.getStatus() == AlphaNewsFetchResult.Status.SUCCESS_EMPTY) {
-            return NewsSyncResult.empty("Chưa có bản tin mới");
+        try {
+            LocalDateTime analyzedTime = LocalDateTime.parse(firstAnalyzedAt);
+            return alphaNewsCoordinator.isCacheFresh(analyzedTime);
+        } catch (Exception ignored) {
+            return false;
         }
-
-        // 3. Alpha UNAVAILABLE hoặc Alpha có bài nhưng Gemini thất bại toàn bộ -> status=degraded
-        return NewsSyncResult.degraded("Dịch vụ xử lý tin tức tạm thời chưa sẵn sàng");
     }
 
     public List<NewsFeedItemDto> getLiveAiNewsFeed(String symbol, int limit) {
@@ -464,8 +604,7 @@ public class AiNewsService {
 
     private AlphaNewsFetchResult fetchRealNewsFromAlphaVantage(String symbol, int limit) {
         if (alphaVantageKey == null || alphaVantageKey.isBlank() || alphaVantageKey.startsWith("${")) {
-            log.info("Alpha Vantage API Key chưa được cung cấp hoặc rỗng, tự động lấy tin bài từ CSDL Cache...");
-            return AlphaNewsFetchResult.unavailable("Alpha Vantage API Key chưa được cấu hình");
+            return AlphaNewsFetchResult.unavailable("ALPHA_KEY_NOT_CONFIGURED");
         }
         try {
             String baseUrl = (alphaVantageUrl != null && !alphaVantageUrl.isBlank()) ? alphaVantageUrl : "https://www.alphavantage.co/query";
@@ -490,25 +629,31 @@ public class AiNewsService {
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
 
             if (response.statusCode() != 200) {
-                log.warn("Alpha Vantage API trả về mã lỗi HTTP {}", response.statusCode());
-                return AlphaNewsFetchResult.unavailable("Alpha Vantage trả về mã HTTP " + response.statusCode());
+                log.warn("ALPHA_HTTP_ERROR");
+                return AlphaNewsFetchResult.httpError();
             }
 
-            JsonNode root = objectMapper.readTree(response.body());
+            JsonNode root;
+            try {
+                root = objectMapper.readTree(response.body());
+            } catch (Exception pe) {
+                log.warn("ALPHA_INVALID_RESPONSE");
+                return AlphaNewsFetchResult.invalidResponse();
+            }
+
             if (root.has("Note") || root.has("Information")) {
-                String msg = root.has("Note") ? root.path("Note").asText() : root.path("Information").asText();
-                log.warn("Alpha Vantage API Rate Limit / Thông báo hệ thống: {}", msg);
-                return AlphaNewsFetchResult.unavailable("Alpha Vantage rate limit / thông báo: " + msg);
+                log.warn("ALPHA_RATE_LIMITED");
+                return AlphaNewsFetchResult.rateLimited();
             }
             if (root.has("Error Message")) {
-                String errorMsg = root.path("Error Message").asText();
-                log.error("Alpha Vantage API Error Message: {}", errorMsg);
-                return AlphaNewsFetchResult.unavailable("Alpha Vantage error: " + errorMsg);
+                log.warn("ALPHA_INVALID_RESPONSE");
+                return AlphaNewsFetchResult.invalidResponse();
             }
 
             JsonNode feed = root.path("feed");
             if (!feed.isArray()) {
-                return AlphaNewsFetchResult.unavailable("Dữ liệu feed không hợp lệ từ Alpha Vantage");
+                log.warn("ALPHA_INVALID_RESPONSE");
+                return AlphaNewsFetchResult.invalidResponse();
             }
 
             List<NewsFeedItemDto> list = new ArrayList<>();
@@ -553,8 +698,8 @@ public class AiNewsService {
             }
             return AlphaNewsFetchResult.success(list);
         } catch (Exception e) {
-            log.warn("Lỗi khi tải bài báo thật từ Alpha Vantage: {}", e.getMessage());
-            return AlphaNewsFetchResult.unavailable("Lỗi kết nối Alpha Vantage: " + e.getMessage());
+            log.warn("ALPHA_NETWORK_ERROR");
+            return AlphaNewsFetchResult.networkError();
         }
     }
 
@@ -707,7 +852,7 @@ public class AiNewsService {
 
         boolean alphaVantageConfigured = alphaVantageKey != null && !alphaVantageKey.isBlank() && !alphaVantageKey.startsWith("${");
         boolean geminiConfigured = geminiApiKey != null && !geminiApiKey.isBlank() && !geminiApiKey.startsWith("${");
-        String effectiveModel = (geminiModel != null && !geminiModel.isBlank() && !geminiModel.startsWith("${")) ? geminiModel : "gemini-2.5-flash";
+        String effectiveModel = (geminiModel != null && !geminiModel.isBlank() && !geminiModel.startsWith("${")) ? geminiModel : "gemini-3.6-flash";
 
         diag.put("status", (alphaVantageConfigured && geminiConfigured) ? "HEALTHY" : "DEGRADED");
         diag.put("alphaVantageConfigured", alphaVantageConfigured);

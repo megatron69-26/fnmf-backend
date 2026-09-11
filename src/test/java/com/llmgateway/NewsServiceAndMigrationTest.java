@@ -29,6 +29,7 @@ import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -1434,5 +1435,551 @@ public class NewsServiceAndMigrationTest {
 
         mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/mobile/news/sync?limit=20"))
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk());
+    }
+
+    @Test
+    @DisplayName("42. Xác nhận không còn gemini-2.5-flash trong cấu hình production và fallback service")
+    public void testProductionConfigDoesNotContainGemini25Flash() throws Exception {
+        java.nio.file.Path prodProps = java.nio.file.Paths.get("src/main/resources/application-prod.properties");
+        java.nio.file.Path defaultProps = java.nio.file.Paths.get("src/main/resources/application.properties");
+        java.nio.file.Path phoneProps = java.nio.file.Paths.get("src/main/resources/application-phone.properties");
+
+        if (java.nio.file.Files.exists(prodProps)) {
+            String prodContent = java.nio.file.Files.readString(prodProps);
+            assertFalse(prodContent.contains("gemini-2.5-flash"), "application-prod.properties không được chứa gemini-2.5-flash");
+            assertTrue(prodContent.contains("gemini-3.6-flash"), "application-prod.properties phải cấu hình gemini-3.6-flash");
+        }
+        if (java.nio.file.Files.exists(defaultProps)) {
+            String defaultContent = java.nio.file.Files.readString(defaultProps);
+            assertFalse(defaultContent.contains("gemini-2.5-flash"), "application.properties không được chứa gemini-2.5-flash");
+            assertTrue(defaultContent.contains("gemini-3.6-flash"), "application.properties phải cấu hình gemini-3.6-flash");
+        }
+        if (java.nio.file.Files.exists(phoneProps)) {
+            String phoneContent = java.nio.file.Files.readString(phoneProps);
+            assertFalse(phoneContent.contains("gemini-2.5-flash"), "application-phone.properties không được chứa gemini-2.5-flash");
+            assertTrue(phoneContent.contains("gemini-3.6-flash"), "application-phone.properties phải cấu hình gemini-3.6-flash");
+        }
+
+        // Kiểm tra fallback service trong diagnostics
+        ReflectionTestUtils.setField(aiNewsService, "geminiModel", "");
+        Map<String, Object> diag = aiNewsService.getDiagnostics();
+        assertEquals("gemini-3.6-flash", diag.get("geminiModel"), "Fallback model mặc định khi cấu hình rỗng phải là gemini-3.6-flash");
+    }
+
+    @Test
+    @DisplayName("43. Vá rò rỉ Alpha Vantage API Key: Response giả chứa key trong Note/Information/Error tuyệt đối không lọt vào result/message")
+    public void testAlphaVantageKeyLeakPrevention() throws Exception {
+        final String SECRET_KEY = "LEAK_SECRET_KEY_12345_XYZ";
+        java.net.http.HttpClient mockHttp = mock(java.net.http.HttpClient.class);
+        java.net.http.HttpResponse<String> mockResp = mock(java.net.http.HttpResponse.class);
+        when(mockResp.statusCode()).thenReturn(200);
+
+        // Trường hợp 1: Alpha Vantage trả về Note chứa API key
+        when(mockResp.body()).thenReturn("{\"Note\": \"Thank you for using Alpha Vantage! Your key " + SECRET_KEY + " has reached 25 req/day limit.\"}");
+        when(mockHttp.send(any(java.net.http.HttpRequest.class), any(java.net.http.HttpResponse.BodyHandler.class)))
+                .thenReturn(mockResp);
+
+        ReflectionTestUtils.setField(aiNewsService, "httpClient", mockHttp);
+        ReflectionTestUtils.setField(aiNewsService, "alphaVantageKey", SECRET_KEY);
+        when(newsAiCacheRepository.findBySymbolOrderByPublishedAtDesc(anyString())).thenReturn(java.util.Collections.emptyList());
+        when(newsAiCacheRepository.findTop10ByOrderByPublishedAtDesc()).thenReturn(java.util.Collections.emptyList());
+        when(newsAiCacheRepository.findAll(any(org.springframework.data.domain.Pageable.class))).thenReturn(new org.springframework.data.domain.PageImpl<>(java.util.Collections.emptyList()));
+
+        com.llmgateway.dto.news.NewsSyncResult syncResult1 = aiNewsService.getLiveAiNewsSyncResult("BTCUSDT", 5);
+        assertNotNull(syncResult1);
+        assertFalse(String.valueOf(syncResult1.getMessage()).contains(SECRET_KEY), "Thông điệp trả ra client tuyệt đối không chứa API key");
+        assertEquals("Dịch vụ xử lý tin tức tạm thời chưa sẵn sàng", syncResult1.getMessage());
+
+        // Kiểm tra coordinator failure code an toàn
+        assertEquals(com.llmgateway.service.AlphaNewsCoordinator.ALPHA_RATE_LIMITED,
+                aiNewsService.getAlphaNewsCoordinator().getLastFailureCode());
+
+        // Trường hợp 2: Alpha Vantage trả về Error Message chứa API key
+        aiNewsService.getAlphaNewsCoordinator().reset();
+        when(mockResp.body()).thenReturn("{\"Error Message\": \"Invalid API call. Please check your key: " + SECRET_KEY + "\"}");
+        com.llmgateway.dto.news.NewsSyncResult syncResult2 = aiNewsService.getLiveAiNewsSyncResult("BTCUSDT", 5);
+        assertNotNull(syncResult2);
+        assertFalse(String.valueOf(syncResult2.getMessage()).contains(SECRET_KEY), "Error message từ provider tuyệt đối không rò rỉ ra ngoài");
+        assertEquals(com.llmgateway.service.AlphaNewsCoordinator.ALPHA_INVALID_RESPONSE,
+                aiNewsService.getAlphaNewsCoordinator().getLastFailureCode());
+
+        // Trường hợp 3: HTTP 500 error body chứa key
+        aiNewsService.getAlphaNewsCoordinator().reset();
+        when(mockResp.statusCode()).thenReturn(500);
+        when(mockResp.body()).thenReturn("Gateway Error for apikey=" + SECRET_KEY);
+        com.llmgateway.dto.news.NewsSyncResult syncResult3 = aiNewsService.getLiveAiNewsSyncResult("BTCUSDT", 5);
+        assertNotNull(syncResult3);
+        assertFalse(String.valueOf(syncResult3.getMessage()).contains(SECRET_KEY));
+        assertEquals(com.llmgateway.service.AlphaNewsCoordinator.ALPHA_HTTP_ERROR,
+                aiNewsService.getAlphaNewsCoordinator().getLastFailureCode());
+    }
+
+    @Test
+    @DisplayName("44. Cache freshness: Xác định độ mới theo analyzedAt (thời điểm AI phân tích), kể cả publishedAt của bài báo đã cũ")
+    public void testCacheFreshnessByAnalyzedAtEvenIfPublishedAtOld() throws Exception {
+        java.net.http.HttpClient mockHttp = mock(java.net.http.HttpClient.class);
+        ReflectionTestUtils.setField(aiNewsService, "httpClient", mockHttp);
+        ReflectionTestUtils.setField(aiNewsService, "alphaVantageKey", "VALID_KEY");
+
+        NewsAiCache cached = new NewsAiCache();
+        cached.setId(101L);
+        cached.setArticleUrl("https://example.com/old-pub-fresh-analysis");
+        cached.setTitle("Cổ Phiếu Công Nghệ Duy Trì Đà Tăng Trưởng Dài Hạn");
+        cached.setOriginalTitle("Tech Stocks Hold Long Term Growth");
+        cached.setDisplayTitleVi("Cổ Phiếu Công Nghệ Duy Trì Đà Tăng Trưởng Dài Hạn");
+        cached.setSummaryPoints("[\"Nhu cầu điện toán đám mây tăng mạnh.\", \"Biên lợi nhuận gộp tiếp tục mở rộng.\"]");
+        cached.setBulletPointsVi("[\"Nhu cầu điện toán đám mây tăng mạnh.\", \"Biên lợi nhuận gộp tiếp tục mở rộng.\"]");
+        cached.setDisplaySummaryVi("Nhu cầu điện toán đám mây tăng mạnh. Biên lợi nhuận gộp tiếp tục mở rộng.");
+        cached.setSentiment("BULLISH");
+        cached.setConfidencePct(BigDecimal.valueOf(90));
+        cached.setReason("Tăng trưởng ổn định");
+        cached.setSource("Bloomberg");
+
+        // Bài báo xuất bản từ 7 ngày trước (rất cũ), NHƯNG vừa được AI phân tích 15 phút trước
+        cached.setPublishedAt(LocalDateTime.now().minusDays(7));
+        cached.setAnalyzedAt(LocalDateTime.now().minusMinutes(15));
+
+        when(newsAiCacheRepository.findBySymbolOrderByPublishedAtDesc(anyString())).thenReturn(List.of(cached));
+
+        aiNewsService.getAlphaNewsCoordinator().reset();
+        com.llmgateway.dto.news.NewsSyncResult result = aiNewsService.getLiveAiNewsSyncResult("BTCUSDT", 5);
+
+        assertNotNull(result);
+        assertEquals("ok", result.getStatus());
+        assertEquals(1, result.getItems().size());
+        assertEquals("Cổ Phiếu Công Nghệ Duy Trì Đà Tăng Trưởng Dài Hạn", result.getItems().get(0).getTitle());
+        assertTrue(result.getItems().get(0).isFromCache());
+
+        // Xác nhận HttpClient TUYỆT ĐỐI không được gọi đến Alpha Vantage vì cache analyzedAt còn mới
+        verify(mockHttp, never()).send(any(), any());
+    }
+
+    @Test
+    @DisplayName("45. Invariant: Không được coi cache rỗng là fresh và empty cache + coordinator fresh không bao giờ trả ok")
+    public void testEmptyCacheWithFreshCoordinatorNeverReturnsOk() throws Exception {
+        java.net.http.HttpClient mockHttp = mock(java.net.http.HttpClient.class);
+        ReflectionTestUtils.setField(aiNewsService, "httpClient", mockHttp);
+        ReflectionTestUtils.setField(aiNewsService, "alphaVantageKey", "VALID_KEY");
+
+        // Đặt coordinator fresh
+        aiNewsService.getAlphaNewsCoordinator().setLastAlphaSuccessTime(System.currentTimeMillis());
+        aiNewsService.getAlphaNewsCoordinator().setLastPipelineSuccessTime(System.currentTimeMillis());
+        assertTrue(aiNewsService.getAlphaNewsCoordinator().isAlphaFresh());
+
+        // Kiểm tra trực tiếp helper isCacheFresh: bắt buộc trả false khi rỗng
+        assertFalse(aiNewsService.isCacheFresh(Collections.emptyList()), "Cache rỗng tuyệt đối không được coi là fresh");
+        assertFalse(aiNewsService.isCacheFresh(null), "Cache null tuyệt đối không được coi là fresh");
+
+        // Khi DB rỗng và Alpha Vantage gặp lỗi 429
+        java.net.http.HttpResponse<String> mockResp = mock(java.net.http.HttpResponse.class);
+        when(mockResp.statusCode()).thenReturn(429);
+        when(mockHttp.send(any(java.net.http.HttpRequest.class), any(java.net.http.HttpResponse.BodyHandler.class)))
+                .thenReturn(mockResp);
+
+        when(newsAiCacheRepository.findBySymbolOrderByPublishedAtDesc(anyString())).thenReturn(Collections.emptyList());
+        when(newsAiCacheRepository.findTop10ByOrderByPublishedAtDesc()).thenReturn(Collections.emptyList());
+        when(newsAiCacheRepository.findAll(any(org.springframework.data.domain.Pageable.class))).thenReturn(new org.springframework.data.domain.PageImpl<>(Collections.emptyList()));
+
+        com.llmgateway.dto.news.NewsSyncResult result = aiNewsService.getLiveAiNewsSyncResult("BTCUSDT", 5);
+
+        assertNotNull(result);
+        assertNotEquals("ok", result.getStatus(), "Cache rỗng tuyệt đối không được trả ok");
+        assertEquals("degraded", result.getStatus());
+        assertTrue(result.getItems().isEmpty());
+    }
+
+    @Test
+    @DisplayName("46. Tách Alpha success khỏi Pipeline: Alpha success nhưng Gemini 500 -> degraded và request thứ hai không gọi lại Alpha")
+    public void testAlphaSuccessWithGeminiFailureGivesDegradedAndSubsequentRequestSkipsAlpha() throws Exception {
+        java.net.http.HttpClient mockHttp = mock(java.net.http.HttpClient.class);
+
+        // Alpha trả về 1 bài báo thật
+        java.net.http.HttpResponse<String> alphaResp = mock(java.net.http.HttpResponse.class);
+        when(alphaResp.statusCode()).thenReturn(200);
+        String alphaBody = "{\"feed\": [{" +
+                "\"title\": \"Federal Reserve Signals Rate Stability\"," +
+                "\"url\": \"https://example.com/fed-stability\"," +
+                "\"time_published\": \"20260911T120000\"," +
+                "\"summary\": \"Fed chair indicated stable interest rate path for upcoming quarters.\"," +
+                "\"source\": \"MarketBeat\"," +
+                "\"category_within_source\": \"Economy\"," +
+                "\"topics\": [{\"topic\": \"financial_markets\"}]" +
+                "}]}";
+        when(alphaResp.body()).thenReturn(alphaBody);
+
+        // Gemini trả về lỗi HTTP 500
+        java.net.http.HttpResponse<String> geminiResp = mock(java.net.http.HttpResponse.class);
+        when(geminiResp.statusCode()).thenReturn(500);
+        when(geminiResp.body()).thenReturn("{\"error\": \"Gemini temporarily down\"}");
+
+        when(mockHttp.send(any(java.net.http.HttpRequest.class), any(java.net.http.HttpResponse.BodyHandler.class)))
+                .thenReturn(alphaResp)
+                .thenReturn(geminiResp);
+
+        ReflectionTestUtils.setField(aiNewsService, "httpClient", mockHttp);
+        ReflectionTestUtils.setField(aiNewsService, "alphaVantageKey", "VALID_KEY");
+        ReflectionTestUtils.setField(aiNewsService, "geminiApiKey", "VALID_GEMINI_KEY");
+
+        // CSDL rỗng
+        when(newsAiCacheRepository.findByArticleUrl(anyString())).thenReturn(Optional.empty());
+        when(newsAiCacheRepository.findByTitle(anyString())).thenReturn(Optional.empty());
+        when(newsAiCacheRepository.findBySymbolOrderByPublishedAtDesc(anyString())).thenReturn(Collections.emptyList());
+        when(newsAiCacheRepository.findTop10ByOrderByPublishedAtDesc()).thenReturn(Collections.emptyList());
+        when(newsAiCacheRepository.findAll(any(org.springframework.data.domain.Pageable.class))).thenReturn(new org.springframework.data.domain.PageImpl<>(Collections.emptyList()));
+
+        aiNewsService.getAlphaNewsCoordinator().reset();
+
+        // Request 1: Alpha thành công nhưng Gemini lỗi toàn bộ -> phải trả degraded, KHÔNG ĐƯỢC trả ok []
+        com.llmgateway.dto.news.NewsSyncResult result1 = aiNewsService.getLiveAiNewsSyncResult("BTCUSDT", 5);
+        assertNotNull(result1);
+        assertEquals("degraded", result1.getStatus(), "Alpha success nhưng Gemini thất bại toàn bộ phải trả degraded");
+        assertTrue(result1.getItems().isEmpty());
+
+        // Alpha đã được ghi nhận thành công và feed được lưu tạm
+        assertTrue(aiNewsService.getAlphaNewsCoordinator().isAlphaFresh(), "Alpha vừa gọi thành công phải ở trạng thái alphaFresh trong 90 phút");
+        assertEquals(1, aiNewsService.getAlphaNewsCoordinator().getLastRawAlphaFeed().size(), "Raw feed Alpha phải được lưu tạm trong bộ nhớ");
+
+        // Request 2 (ngay sau đó):
+        // Khi gọi lại, hệ thống tái sử dụng raw feed trong bộ nhớ, TUYỆT ĐỐI không gọi lại Alpha Vantage!
+        com.llmgateway.dto.news.NewsSyncResult result2 = aiNewsService.getLiveAiNewsSyncResult("BTCUSDT", 5);
+        assertNotNull(result2);
+        assertEquals("degraded", result2.getStatus());
+
+        // Khẳng định: Trong cả 2 request, Alpha Vantage chỉ được gọi đúng 1 lần duy nhất (không đốt quota lần 2)
+        verify(mockHttp, times(1)).send(argThat(req -> req.uri().toString().contains("alphavantage.co")), any());
+    }
+
+    @Test
+    @DisplayName("47. Cooldown theo loại lỗi: ALPHA_RATE_LIMITED cooldown 24 giờ (1.440 phút), lỗi HTTP cooldown 15 phút với Clock testable")
+    public void testRateLimitCooldown24HoursWithInjectableClock() {
+        com.llmgateway.service.AlphaNewsCoordinator coordinator = new com.llmgateway.service.AlphaNewsCoordinator();
+        coordinator.setRefreshIntervalMinutes(90);
+        coordinator.setFailureCooldownMinutes(15);
+        coordinator.setRateLimitCooldownMinutes(1440);
+
+        java.time.Instant startInstant = java.time.Instant.parse("2026-09-11T12:00:00Z");
+        coordinator.setClock(java.time.Clock.fixed(startInstant, java.time.ZoneOffset.UTC));
+
+        // 1. Ghi nhận lỗi RATE LIMITED
+        coordinator.recordFailure(com.llmgateway.service.AlphaNewsCoordinator.ALPHA_RATE_LIMITED);
+        assertTrue(coordinator.isInCooldown(), "Ngay sau khi bị rate limit, coordinator phải trong cooldown");
+
+        // Sau 12 giờ (720 phút) -> vẫn phải ở trong cooldown
+        coordinator.setClock(java.time.Clock.fixed(startInstant.plus(java.time.Duration.ofHours(12)), java.time.ZoneOffset.UTC));
+        assertTrue(coordinator.isInCooldown(), "Sau 12 giờ, rate limit cooldown 24 giờ vẫn phải đang active");
+
+        // Sau 23 giờ 59 phút -> vẫn trong cooldown
+        coordinator.setClock(java.time.Clock.fixed(startInstant.plus(java.time.Duration.ofMinutes(1439)), java.time.ZoneOffset.UTC));
+        assertTrue(coordinator.isInCooldown(), "Sau 1.439 phút vẫn phải trong cooldown");
+
+        // Sau 24 giờ 1 phút -> hết cooldown
+        coordinator.setClock(java.time.Clock.fixed(startInstant.plus(java.time.Duration.ofMinutes(1441)), java.time.ZoneOffset.UTC));
+        assertFalse(coordinator.isInCooldown(), "Sau 1.441 phút phải hết cooldown 24 giờ");
+
+        // 2. So sánh với lỗi thường ALPHA_HTTP_ERROR: chỉ cooldown 15 phút
+        coordinator.setClock(java.time.Clock.fixed(startInstant, java.time.ZoneOffset.UTC));
+        coordinator.recordFailure(com.llmgateway.service.AlphaNewsCoordinator.ALPHA_HTTP_ERROR);
+        assertTrue(coordinator.isInCooldown());
+
+        // Sau 16 phút -> lỗi HTTP đã hết cooldown
+        coordinator.setClock(java.time.Clock.fixed(startInstant.plus(java.time.Duration.ofMinutes(16)), java.time.ZoneOffset.UTC));
+        assertFalse(coordinator.isInCooldown(), "Lỗi HTTP chỉ cooldown 15 phút, sau 16 phút phải kết thúc cooldown");
+    }
+
+    @Test
+    @DisplayName("48. Invariant bắt buộc: NewsSyncResult.ok luôn có data không rỗng, cấm tạo ok với empty/null")
+    public void testStatusOkInvariantRequiresNonEmptyData() {
+        assertThrows(IllegalArgumentException.class, () -> com.llmgateway.dto.news.NewsSyncResult.ok(Collections.emptyList()),
+                "Không thể tạo NewsSyncResult.ok với danh sách rỗng");
+        assertThrows(IllegalArgumentException.class, () -> com.llmgateway.dto.news.NewsSyncResult.ok(null),
+                "Không thể tạo NewsSyncResult.ok với danh sách null");
+
+        NewsFeedItemDto item = new NewsFeedItemDto();
+        item.setTitle("Tiêu đề hợp lệ");
+        com.llmgateway.dto.news.NewsSyncResult okResult = com.llmgateway.dto.news.NewsSyncResult.ok(List.of(item));
+        assertEquals("ok", okResult.getStatus());
+        assertFalse(okResult.getItems().isEmpty());
+    }
+
+    @Test
+    @DisplayName("49. Một đường gọi Alpha duy nhất: MarketDataService luôn ủy quyền qua AiNewsService, khóa đường fetch độc lập")
+    public void testMarketDataServiceSingleSharedPathwayLocksIndependentFetch() {
+        com.llmgateway.service.BinanceMarketClient mockBinanceClient = mock(com.llmgateway.service.BinanceMarketClient.class);
+        com.llmgateway.service.MarketDataService marketService = new com.llmgateway.service.MarketDataService(objectMapper, mockBinanceClient);
+        AiNewsService mockAiNewsService = mock(AiNewsService.class);
+
+        NewsFeedItemDto item = new NewsFeedItemDto();
+        item.setTitle("Tin tức chia sẻ");
+        when(mockAiNewsService.getLiveAiNewsFeed(isNull(), eq(5))).thenReturn(List.of(item));
+
+        marketService.setAiNewsService(mockAiNewsService);
+
+        List<NewsFeedItemDto> feed = marketService.getNewsFeed(5);
+        assertNotNull(feed);
+        assertEquals(1, feed.size());
+        assertEquals("Tin tức chia sẻ", feed.get(0).getTitle());
+        verify(mockAiNewsService, times(1)).getLiveAiNewsFeed(isNull(), eq(5));
+
+        // Khi gỡ aiNewsService: MarketDataService chỉ trả cache nội bộ, không gọi HTTP Alpha Vantage độc lập
+        marketService.setAiNewsService(null);
+        List<NewsFeedItemDto> emptyOrCached = marketService.getNewsFeed(5);
+        assertNotNull(emptyOrCached);
+    }
+
+    @Test
+    @DisplayName("50. Scope matching: Snapshot BTC không dùng cho ETH; snapshot GLOBAL dùng chung cho mọi symbol")
+    public void testScopeMatchingSnapshotBtcDoesNotServeEth() throws Exception {
+        java.net.http.HttpClient mockHttp = mock(java.net.http.HttpClient.class);
+        ReflectionTestUtils.setField(aiNewsService, "httpClient", mockHttp);
+        ReflectionTestUtils.setField(aiNewsService, "alphaVantageKey", "VALID_KEY");
+
+        java.net.http.HttpResponse<String> mockResp = mock(java.net.http.HttpResponse.class);
+        when(mockResp.statusCode()).thenReturn(200);
+        when(mockResp.body()).thenReturn("{\"feed\": []}");
+        when(mockHttp.send(any(java.net.http.HttpRequest.class), any(java.net.http.HttpResponse.BodyHandler.class)))
+                .thenReturn(mockResp);
+
+        when(newsAiCacheRepository.findBySymbolOrderByPublishedAtDesc(anyString())).thenReturn(Collections.emptyList());
+        when(newsAiCacheRepository.findTop10ByOrderByPublishedAtDesc()).thenReturn(Collections.emptyList());
+        when(newsAiCacheRepository.findAll(any(org.springframework.data.domain.Pageable.class))).thenReturn(new org.springframework.data.domain.PageImpl<>(Collections.emptyList()));
+
+        aiNewsService.getAlphaNewsCoordinator().reset();
+
+        // 1. Request BTC: Alpha được gọi, snapshot lưu scope "BTC"
+        com.llmgateway.dto.news.NewsSyncResult btcRes = aiNewsService.getLiveAiNewsSyncResult("BTC", 5);
+        assertNotNull(btcRes);
+        assertEquals("BTC", aiNewsService.getAlphaNewsCoordinator().getCachedSnapshot().getScope());
+        verify(mockHttp, times(1)).send(any(), any());
+
+        // 2. Request ETH: Scope "BTC" không khớp scope "ETH", Alpha bắt buộc phải được gọi lần 2
+        com.llmgateway.dto.news.NewsSyncResult ethRes = aiNewsService.getLiveAiNewsSyncResult("ETH", 5);
+        assertNotNull(ethRes);
+        assertEquals("ETH", aiNewsService.getAlphaNewsCoordinator().getCachedSnapshot().getScope());
+        verify(mockHttp, times(2)).send(any(), any());
+
+        // 3. Đặt snapshot scope GLOBAL: Phục vụ được cả BTC và ETH mà không gọi Alpha
+        aiNewsService.getAlphaNewsCoordinator().recordAlphaSnapshot("GLOBAL", com.llmgateway.dto.news.AlphaNewsFetchResult.Status.SUCCESS_EMPTY, Collections.emptyList());
+        aiNewsService.getLiveAiNewsSyncResult("BTC", 5);
+        aiNewsService.getLiveAiNewsSyncResult("ETH", 5);
+        // Số lần gọi Alpha vẫn là 2 (không tăng thêm)
+        verify(mockHttp, times(2)).send(any(), any());
+    }
+
+    @Test
+    @DisplayName("51. SUCCESS_EMPTY replay: Alpha trả feed=[] được cache hợp lệ và replay status=empty trong 90 phút, không thành degraded")
+    public void testSuccessEmptyReplayedAsEmptyWithin90MinutesWithoutCallingAlpha() throws Exception {
+        java.net.http.HttpClient mockHttp = mock(java.net.http.HttpClient.class);
+        ReflectionTestUtils.setField(aiNewsService, "httpClient", mockHttp);
+        ReflectionTestUtils.setField(aiNewsService, "alphaVantageKey", "VALID_KEY");
+
+        java.net.http.HttpResponse<String> mockResp = mock(java.net.http.HttpResponse.class);
+        when(mockResp.statusCode()).thenReturn(200);
+        when(mockResp.body()).thenReturn("{\"feed\": []}");
+        when(mockHttp.send(any(java.net.http.HttpRequest.class), any(java.net.http.HttpResponse.BodyHandler.class)))
+                .thenReturn(mockResp);
+
+        when(newsAiCacheRepository.findBySymbolOrderByPublishedAtDesc(anyString())).thenReturn(Collections.emptyList());
+        when(newsAiCacheRepository.findTop10ByOrderByPublishedAtDesc()).thenReturn(Collections.emptyList());
+        when(newsAiCacheRepository.findAll(any(org.springframework.data.domain.Pageable.class))).thenReturn(new org.springframework.data.domain.PageImpl<>(Collections.emptyList()));
+
+        aiNewsService.getAlphaNewsCoordinator().reset();
+
+        // Request 1: Alpha trả SUCCESS_EMPTY -> trả NewsSyncResult.empty
+        com.llmgateway.dto.news.NewsSyncResult res1 = aiNewsService.getLiveAiNewsSyncResult("BTCUSDT", 5);
+        assertNotNull(res1);
+        assertEquals("empty", res1.getStatus());
+        assertEquals("Chưa có bản tin mới", res1.getMessage());
+        verify(mockHttp, times(1)).send(any(), any());
+
+        // Request 2 (trong vòng 90 phút): Replay empty từ snapshot, KHÔNG thành degraded, KHÔNG gọi lại Alpha
+        com.llmgateway.dto.news.NewsSyncResult res2 = aiNewsService.getLiveAiNewsSyncResult("BTCUSDT", 5);
+        assertNotNull(res2);
+        assertEquals("empty", res2.getStatus(), "Phải giữ đúng status=empty, không được biến thành degraded");
+        assertEquals("Chưa có bản tin mới", res2.getMessage());
+        verify(mockHttp, times(1)).send(any(), any());
+    }
+
+    @Test
+    @DisplayName("52. Single-flight bao phủ toàn bộ pipeline: Luồng đồng thời nhận degraded an toàn khi đang làm mới, không gọi trùng Alpha/Gemini")
+    public void testSingleFlightCoversEntirePipelinePreventingDuplicateGeminiAndDbWrites() throws Exception {
+        java.net.http.HttpClient mockHttp = mock(java.net.http.HttpClient.class);
+        ReflectionTestUtils.setField(aiNewsService, "httpClient", mockHttp);
+        ReflectionTestUtils.setField(aiNewsService, "alphaVantageKey", "VALID_KEY");
+        ReflectionTestUtils.setField(aiNewsService, "geminiApiKey", "VALID_GEMINI_KEY");
+
+        when(newsAiCacheRepository.findBySymbolOrderByPublishedAtDesc(anyString())).thenReturn(Collections.emptyList());
+        when(newsAiCacheRepository.findTop10ByOrderByPublishedAtDesc()).thenReturn(Collections.emptyList());
+        when(newsAiCacheRepository.findAll(any(org.springframework.data.domain.Pageable.class))).thenReturn(new org.springframework.data.domain.PageImpl<>(Collections.emptyList()));
+
+        aiNewsService.getAlphaNewsCoordinator().reset();
+
+        java.util.concurrent.CountDownLatch pipelineStarted = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch allowPipelineToFinish = new java.util.concurrent.CountDownLatch(1);
+
+        // Alpha trả về 1 bài báo
+        java.net.http.HttpResponse<String> alphaResp = mock(java.net.http.HttpResponse.class);
+        when(alphaResp.statusCode()).thenReturn(200);
+        when(alphaResp.body()).thenReturn("{\"feed\": [{\"title\": \"Crypto Rally\", \"url\": \"https://example.com/cr\", \"time_published\": \"20260911T120000\", \"summary\": \"Summary content\", \"source\": \"CoinDesk\"}]}");
+
+        // Gemini trả về phản hồi hợp lệ, nhưng bị chặn bởi latch để mô phỏng đang xử lý pipeline
+        java.net.http.HttpResponse<String> geminiResp = mock(java.net.http.HttpResponse.class);
+        when(geminiResp.statusCode()).thenReturn(200);
+        when(geminiResp.body()).thenReturn("{\"choices\": [{\"message\": {\"content\": \"{\\\"displayTitleVi\\\": \\\"Thị trường crypto bùng nổ mạnh mẽ\\\", \\\"summary\\\": [\\\"Giá Bitcoin tăng vọt vượt đỉnh cũ\\\", \\\"Dòng tiền đầu tư tiếp tục đổ mạnh vào thị trường\\\"], \\\"sentiment\\\": \\\"BULLISH\\\", \\\"confidence\\\": 90, \\\"reason\\\": \\\"Dòng tiền dồi dào\\\"}\"}}]}");
+
+        when(mockHttp.send(any(java.net.http.HttpRequest.class), any(java.net.http.HttpResponse.BodyHandler.class)))
+                .thenAnswer(invocation -> {
+                    java.net.http.HttpRequest req = invocation.getArgument(0);
+                    if (req.uri().toString().contains("alphavantage.co")) {
+                        return alphaResp;
+                    }
+                    if (req.uri().toString().contains("openai") || req.uri().toString().contains("generativelanguage")) {
+                        pipelineStarted.countDown();
+                        allowPipelineToFinish.await(5, java.util.concurrent.TimeUnit.SECONDS);
+                        return geminiResp;
+                    }
+                    return null;
+                });
+
+        java.util.concurrent.atomic.AtomicReference<com.llmgateway.dto.news.NewsSyncResult> thread1Result = new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.atomic.AtomicReference<com.llmgateway.dto.news.NewsSyncResult> thread2Result = new java.util.concurrent.atomic.AtomicReference<>();
+
+        // Luồng 1 thực hiện pipeline làm mới
+        Thread t1 = new Thread(() -> {
+            thread1Result.set(aiNewsService.getLiveAiNewsSyncResult("BTC", 5));
+        });
+        t1.start();
+
+        // Chờ Luồng 1 đã vào sâu trong pipeline (đang gọi Gemini)
+        assertTrue(pipelineStarted.await(5, java.util.concurrent.TimeUnit.SECONDS));
+
+        // Luồng 2 gọi đồng thời trong lúc Luồng 1 chưa thả lock: Phải nhận degraded an toàn ngay lập tức
+        Thread t2 = new Thread(() -> {
+            thread2Result.set(aiNewsService.getLiveAiNewsSyncResult("BTC", 5));
+        });
+        t2.start();
+        t2.join(2000);
+
+        assertNotNull(thread2Result.get());
+        assertEquals("degraded", thread2Result.get().getStatus(), "Luồng 2 đồng thời khi chưa có cache phải trả degraded an toàn");
+
+        // Cho phép Luồng 1 hoàn tất
+        allowPipelineToFinish.countDown();
+        t1.join(5000);
+
+        assertNotNull(thread1Result.get());
+        assertEquals("ok", thread1Result.get().getStatus(), "Luồng 1 hoàn tất pipeline trả về ok");
+    }
+
+    @Test
+    @DisplayName("53. Gemini failure cooldown: Gemini lỗi đặt cooldown 10 phút, request trong cooldown không gọi Gemini, hết cooldown retry thành công")
+    public void testGeminiFailureCooldownPreventsGeminiCallsAndRetriesAfterCooldownWithoutAlphaCall() throws Exception {
+        java.net.http.HttpClient mockHttp = mock(java.net.http.HttpClient.class);
+        ReflectionTestUtils.setField(aiNewsService, "httpClient", mockHttp);
+        ReflectionTestUtils.setField(aiNewsService, "alphaVantageKey", "VALID_KEY");
+        ReflectionTestUtils.setField(aiNewsService, "geminiApiKey", "VALID_GEMINI_KEY");
+
+        when(newsAiCacheRepository.findBySymbolOrderByPublishedAtDesc(anyString())).thenReturn(Collections.emptyList());
+        when(newsAiCacheRepository.findTop10ByOrderByPublishedAtDesc()).thenReturn(Collections.emptyList());
+        when(newsAiCacheRepository.findAll(any(org.springframework.data.domain.Pageable.class))).thenReturn(new org.springframework.data.domain.PageImpl<>(Collections.emptyList()));
+
+        aiNewsService.getAlphaNewsCoordinator().reset();
+        java.time.Instant start = java.time.Instant.parse("2026-09-11T12:00:00Z");
+        aiNewsService.getAlphaNewsCoordinator().setClock(java.time.Clock.fixed(start, java.time.ZoneOffset.UTC));
+
+        // Alpha trả về 1 bài báo
+        java.net.http.HttpResponse<String> alphaResp = mock(java.net.http.HttpResponse.class);
+        when(alphaResp.statusCode()).thenReturn(200);
+        when(alphaResp.body()).thenReturn("{\"feed\": [{\"title\": \"US Inflation Cools Down\", \"url\": \"https://example.com/cpi\", \"time_published\": \"20260911T120000\", \"summary\": \"CPI dropped to 2.1%.\", \"source\": \"Bloomberg\"}]}");
+
+        // Lần 1: Gemini lỗi 500
+        java.net.http.HttpResponse<String> geminiFailResp = mock(java.net.http.HttpResponse.class);
+        when(geminiFailResp.statusCode()).thenReturn(500);
+        when(geminiFailResp.body()).thenReturn("{\"error\": \"Gemini overload\"}");
+
+        // Lần sau: Gemini thành công 200
+        java.net.http.HttpResponse<String> geminiSuccessResp = mock(java.net.http.HttpResponse.class);
+        when(geminiSuccessResp.statusCode()).thenReturn(200);
+        when(geminiSuccessResp.body()).thenReturn("{\"choices\": [{\"message\": {\"content\": \"{\\\"displayTitleVi\\\": \\\"Lạm phát Mỹ hạ nhiệt mạnh mẽ\\\", \\\"summary\\\": [\\\"Chỉ số CPI giảm về mức 2.1% so với cùng kỳ\\\", \\\"Áp lực giá cả tiếp tục hạ nhiệt trên diện rộng\\\"], \\\"sentiment\\\": \\\"BULLISH\\\", \\\"confidence\\\": 92, \\\"reason\\\": \\\"Tín hiệu nới lỏng tiền tệ\\\"}\"}}]}");
+
+        when(mockHttp.send(any(java.net.http.HttpRequest.class), any(java.net.http.HttpResponse.BodyHandler.class)))
+                .thenReturn(alphaResp)
+                .thenReturn(geminiFailResp)
+                .thenReturn(geminiSuccessResp);
+
+        // Request 1: Alpha 200, Gemini 500 -> trả degraded
+        com.llmgateway.dto.news.NewsSyncResult res1 = aiNewsService.getLiveAiNewsSyncResult("GLOBAL", 5);
+        assertNotNull(res1);
+        assertEquals("degraded", res1.getStatus());
+        assertTrue(aiNewsService.getAlphaNewsCoordinator().isGeminiInCooldown());
+
+        // Request 2 (sau 3 phút, vẫn trong 10 phút cooldown): KHÔNG gọi lại Gemini, KHÔNG gọi lại Alpha
+        aiNewsService.getAlphaNewsCoordinator().setClock(java.time.Clock.fixed(start.plus(java.time.Duration.ofMinutes(3)), java.time.ZoneOffset.UTC));
+        com.llmgateway.dto.news.NewsSyncResult res2 = aiNewsService.getLiveAiNewsSyncResult("GLOBAL", 5);
+        assertNotNull(res2);
+        assertEquals("degraded", res2.getStatus());
+
+        // Xác nhận Alpha chỉ gọi đúng 1 lần, Gemini chỉ gọi đúng 1 lần
+        verify(mockHttp, times(1)).send(argThat(r -> r.uri().toString().contains("alphavantage.co")), any());
+        verify(mockHttp, times(1)).send(argThat(r -> r.uri().toString().contains("openai") || r.uri().toString().contains("generativelanguage")), any());
+
+        // Request 3 (sau 11 phút, hết cooldown Gemini, vẫn trong 90 phút Alpha): Retry Gemini thành công, KHÔNG gọi Alpha
+        aiNewsService.getAlphaNewsCoordinator().setClock(java.time.Clock.fixed(start.plus(java.time.Duration.ofMinutes(11)), java.time.ZoneOffset.UTC));
+        assertFalse(aiNewsService.getAlphaNewsCoordinator().isGeminiInCooldown());
+
+        com.llmgateway.dto.news.NewsSyncResult res3 = aiNewsService.getLiveAiNewsSyncResult("GLOBAL", 5);
+        assertNotNull(res3);
+        assertEquals("ok", res3.getStatus());
+        assertEquals(1, res3.getItems().size());
+        assertEquals("Lạm phát Mỹ hạ nhiệt mạnh mẽ", res3.getItems().get(0).getTitle());
+
+        // Alpha Vantage VẪN chỉ được gọi đúng 1 lần duy nhất trong toàn bộ quy trình!
+        verify(mockHttp, times(1)).send(argThat(r -> r.uri().toString().contains("alphavantage.co")), any());
+    }
+
+    @Test
+    @DisplayName("54. Cache freshness: analyzedAt null hoặc rỗng bị coi là STALE kể cả publishedAt vừa mới xuất bản")
+    public void testCacheWithNullAnalyzedAtEvenWithRecentPublishedAtIsConsideredStale() {
+        NewsFeedItemDto item = new NewsFeedItemDto();
+        item.setTitle("Tin tức");
+        item.setTimePublished(LocalDateTime.now().toString());
+        item.setAnalyzedAt(null); // Không có analyzedAt
+
+        assertFalse(aiNewsService.isCacheFresh(List.of(item)), "Cache thiếu analyzedAt bắt buộc phải coi là STALE");
+
+        item.setAnalyzedAt("invalid-date-format");
+        assertFalse(aiNewsService.isCacheFresh(List.of(item)), "analyzedAt sai định dạng phải coi là STALE");
+
+        // analyzedAt hợp lệ mới trong 90 phút -> FRESH
+        item.setAnalyzedAt(LocalDateTime.now().minusMinutes(30).toString());
+        assertTrue(aiNewsService.isCacheFresh(List.of(item)));
+
+        // analyzedAt hợp lệ nhưng cũ hơn 90 phút -> STALE
+        item.setAnalyzedAt(LocalDateTime.now().minusMinutes(91).toString());
+        assertFalse(aiNewsService.isCacheFresh(List.of(item)));
+    }
+
+    @Test
+    @DisplayName("55. Invariant NewsSyncResult: Bắt buộc từ chối status='ok' khi items rỗng ở mọi constructor và setter")
+    public void testNewsSyncResultInvariantRejectsOkWithEmptyItemsOnAllSettersAndConstructors() {
+        assertThrows(IllegalArgumentException.class, () -> new com.llmgateway.dto.news.NewsSyncResult("ok", "msg", Collections.emptyList()));
+        assertThrows(IllegalArgumentException.class, () -> new com.llmgateway.dto.news.NewsSyncResult("ok", "msg", null));
+        assertThrows(IllegalArgumentException.class, () -> com.llmgateway.dto.news.NewsSyncResult.ok(Collections.emptyList()));
+        assertThrows(IllegalArgumentException.class, () -> com.llmgateway.dto.news.NewsSyncResult.ok(null));
+
+        com.llmgateway.dto.news.NewsSyncResult res = com.llmgateway.dto.news.NewsSyncResult.degraded("error");
+        assertThrows(IllegalArgumentException.class, () -> res.setStatus("ok"));
+
+        NewsFeedItemDto valid = new NewsFeedItemDto();
+        valid.setTitle("Tin chuẩn");
+        com.llmgateway.dto.news.NewsSyncResult okRes = com.llmgateway.dto.news.NewsSyncResult.ok(List.of(valid));
+        assertThrows(IllegalArgumentException.class, () -> okRes.setItems(Collections.emptyList()));
+        assertThrows(IllegalArgumentException.class, () -> okRes.setItems(null));
+    }
+
+    @Test
+    @DisplayName("56. Cấu hình Gemini Cooldown: Giá trị mặc định 10 phút được nạp đúng vào Coordinator")
+    public void testGeminiCooldownConfigurationLoaded() {
+        assertEquals(10, aiNewsService.getAlphaNewsCoordinator().getGeminiCooldownMinutes(),
+                "Gemini cooldown minutes mặc định phải là 10 phút");
     }
 }

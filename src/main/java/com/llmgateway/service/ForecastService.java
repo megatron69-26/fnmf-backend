@@ -47,7 +47,7 @@ public class ForecastService {
     @Value("${openai.api.url:https://generativelanguage.googleapis.com/v1beta/openai/chat/completions}")
     private String geminiApiUrl;
 
-    @Value("${openai.default-model:gemini-2.0-flash}")
+    @Value("${openai.default-model:gemini-3.6-flash}")
     private String geminiModel;
 
     // Thời gian cache dự báo trong CSDL (15 phút)
