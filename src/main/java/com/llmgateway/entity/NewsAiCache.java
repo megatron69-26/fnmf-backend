@@ -43,6 +43,15 @@ public class NewsAiCache {
     @Column(name = "ORIGINAL_TITLE", length = 500)
     private String originalTitle;
 
+    @Column(name = "DISPLAY_TITLE_VI", length = 500)
+    private String displayTitleVi;
+
+    @Column(name = "DISPLAY_SUMMARY_VI", columnDefinition = "TEXT")
+    private String displaySummaryVi;
+
+    @Column(name = "BULLET_POINTS_VI", columnDefinition = "TEXT")
+    private String bulletPointsVi;
+
     @Column(name = "SUMMARY_POINTS", columnDefinition = "TEXT")
     private String summaryPoints; // JSON string chứa mảng các gạch đầu dòng
 
@@ -189,5 +198,29 @@ public class NewsAiCache {
 
     public void setOriginalTitle(String originalTitle) {
         this.originalTitle = originalTitle;
+    }
+
+    public String getDisplayTitleVi() {
+        return displayTitleVi;
+    }
+
+    public void setDisplayTitleVi(String displayTitleVi) {
+        this.displayTitleVi = displayTitleVi;
+    }
+
+    public String getDisplaySummaryVi() {
+        return displaySummaryVi;
+    }
+
+    public void setDisplaySummaryVi(String displaySummaryVi) {
+        this.displaySummaryVi = displaySummaryVi;
+    }
+
+    public String getBulletPointsVi() {
+        return bulletPointsVi;
+    }
+
+    public void setBulletPointsVi(String bulletPointsVi) {
+        this.bulletPointsVi = bulletPointsVi;
     }
 }

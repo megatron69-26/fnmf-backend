@@ -71,6 +71,20 @@ public class DataInitializer implements CommandLineRunner {
 
         // 4. Nạp seed cache bài báo thật nếu cache đang thiếu dữ liệu
         seedNewsCacheIfNeeded();
+
+        // 5. Chuẩn hóa nguồn tin tức cũ và làm giàu bản dịch tiếng Việt trong Cache CSDL
+        cleanUpLegacyNewsCacheIfNeeded();
+    }
+
+    public void cleanUpLegacyNewsCacheIfNeeded() {
+        try {
+            int cleaned = newsCacheService.cleanupLegacyCacheSources();
+            if (cleaned > 0) {
+                log.info("NEWS CACHE CLEANUP | Đã chuẩn hóa nguồn và tiêu đề tiếng Việt cho {} bản ghi trong CSDL.", cleaned);
+            }
+        } catch (Exception e) {
+            log.warn("NEWS CACHE CLEANUP | Bỏ qua dọn dẹp cache do: {}", e.getMessage());
+        }
     }
 
     /**

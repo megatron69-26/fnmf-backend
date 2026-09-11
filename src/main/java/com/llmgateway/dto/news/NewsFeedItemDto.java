@@ -8,14 +8,20 @@ import java.util.List;
 public class NewsFeedItemDto {
 
     private String title;
+    private String displayTitleVi;
+    private String originalTitle;
+    private String displaySummaryVi;
+    private String originalSummary;
     private String url;
     private String timePublished;
-    private String summary;          // Tóm tắt gốc từ báo chí
+    private String summary;          // Tóm tắt hiển thị
     private String bannerImage;      // Ảnh bìa bài báo
     private String source;           // Nguồn báo (Investing.com, TradingView, Reuters...)
+    private String publisher;        // Tên nhà xuất bản chuẩn hóa (MarketBeat, CNBC, Yahoo Finance...)
     private String author;           // Tác giả bài báo
     private String category;
     private List<String> topics;
+    private List<String> bulletPointsVi;
 
     // Dữ liệu phân tích chuyên sâu từ Gemini AI
     private List<String> aiSummary;  // 3 gạch đầu dòng tóm tắt sâu sắc từ Gemini
@@ -166,5 +172,53 @@ public class NewsFeedItemDto {
 
     public void setAuthor(String author) {
         this.author = author;
+    }
+
+    public String getDisplayTitleVi() {
+        return displayTitleVi;
+    }
+
+    public void setDisplayTitleVi(String displayTitleVi) {
+        this.displayTitleVi = displayTitleVi;
+    }
+
+    public String getOriginalTitle() {
+        return originalTitle;
+    }
+
+    public void setOriginalTitle(String originalTitle) {
+        this.originalTitle = originalTitle;
+    }
+
+    public String getPublisher() {
+        return publisher;
+    }
+
+    public void setPublisher(String publisher) {
+        this.publisher = publisher;
+    }
+
+    public List<String> getBulletPointsVi() {
+        return bulletPointsVi;
+    }
+
+    public void setBulletPointsVi(List<String> bulletPointsVi) {
+        this.bulletPointsVi = bulletPointsVi;
+    }
+
+    public String getOriginalSummary() {
+        return originalSummary;
+    }
+
+    public void setOriginalSummary(String originalSummary) {
+        this.originalSummary = originalSummary;
+    }
+
+    public String getDisplaySummaryVi() {
+        return displaySummaryVi;
+    }
+
+    public void setDisplaySummaryVi(String displaySummaryVi) {
+        this.displaySummaryVi = displaySummaryVi;
     }
 }

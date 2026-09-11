@@ -60,18 +60,47 @@ public class NewsAiController {
                     ? item.getUrl()
                     : String.valueOf(idCounter++);
             map.put("id", idVal);
-            map.put("title", item.getTitle() != null ? item.getTitle() : "");
-            String summaryVal = (item.getSummary() != null && !item.getSummary().isBlank())
-                    ? item.getSummary()
-                    : (item.getAiSummary() != null && !item.getAiSummary().isEmpty() ? String.join(" ", item.getAiSummary()) : "");
-            map.put("summary", summaryVal);
-            map.put("source", item.getSource() != null ? item.getSource() : "Unknown");
+            String origTitle = (item.getOriginalTitle() != null && !item.getOriginalTitle().isBlank())
+                    ? item.getOriginalTitle().trim()
+                    : "";
+            String displayTitle = (item.getDisplayTitleVi() != null && !item.getDisplayTitleVi().isBlank())
+                    ? item.getDisplayTitleVi().trim()
+                    : (item.getTitle() != null ? item.getTitle().trim() : "");
+            map.put("originalTitle", origTitle);
+            map.put("displayTitleVi", displayTitle);
+            map.put("title", displayTitle);
+
+            String origSummary = (item.getOriginalSummary() != null && !item.getOriginalSummary().isBlank())
+                    ? item.getOriginalSummary().trim()
+                    : "";
+            map.put("originalSummary", origSummary);
+
+            List<String> bulletsVi = (item.getBulletPointsVi() != null && !item.getBulletPointsVi().isEmpty())
+                    ? item.getBulletPointsVi()
+                    : (item.getAiSummary() != null ? item.getAiSummary() : new ArrayList<>());
+
+            String displaySummary = (item.getDisplaySummaryVi() != null && !item.getDisplaySummaryVi().isBlank())
+                    ? item.getDisplaySummaryVi().trim()
+                    : ((bulletsVi != null && !bulletsVi.isEmpty()) ? String.join(" ", bulletsVi).trim() : "");
+
+            map.put("displaySummaryVi", displaySummary);
+            map.put("summary", displaySummary);
+
+            String publisher = (item.getPublisher() != null && !item.getPublisher().isBlank())
+                    ? item.getPublisher().trim()
+                    : com.llmgateway.service.NewsPublisherResolver.resolvePublisher(item.getSource(), item.getUrl());
+            if (com.llmgateway.service.NewsPublisherResolver.isGeneric(publisher)) {
+                publisher = "";
+            }
+            map.put("source", publisher != null ? publisher : "");
+            map.put("publisher", publisher != null ? publisher : "");
             map.put("publishedAt", item.getTimePublished() != null ? item.getTimePublished() : "");
             map.put("imageUrl", item.getBannerImage() != null ? item.getBannerImage() : "");
             String sentiment = item.getAiSentiment() != null ? item.getAiSentiment().toLowerCase() : "neutral";
             map.put("sentiment", sentiment);
             map.put("confidence", item.getAiConfidence() != null ? item.getAiConfidence() : 0);
-            map.put("bulletPoints", item.getAiSummary() != null ? item.getAiSummary() : new ArrayList<>());
+            map.put("bulletPoints", bulletsVi);
+            map.put("bulletPointsVi", bulletsVi);
             map.put("author", item.getAuthor() != null ? item.getAuthor() : "");
             map.put("link", item.getUrl() != null ? item.getUrl() : "");
             data.add(map);

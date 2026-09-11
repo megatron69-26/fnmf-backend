@@ -139,23 +139,108 @@ public class NewsCacheService {
                                                   String originalSummary,
                                                   String bannerImage,
                                                   String originalTitle) {
+        return saveCachedArticle(articleUrl, title, symbol, summaryPointsJson, sentiment, confidencePct, reason, publishedAt, analyzedAt, author, source, originalSummary, bannerImage, originalTitle, null, null);
+    }
+
+    @Transactional
+    public Optional<NewsAiCache> saveCachedArticle(String articleUrl,
+                                                  String title,
+                                                  String symbol,
+                                                  String summaryPointsJson,
+                                                  String sentiment,
+                                                  BigDecimal confidencePct,
+                                                  String reason,
+                                                  LocalDateTime publishedAt,
+                                                  LocalDateTime analyzedAt,
+                                                  String author,
+                                                  String source,
+                                                  String originalSummary,
+                                                  String bannerImage,
+                                                  String originalTitle,
+                                                  String displayTitleVi,
+                                                  String bulletPointsVi) {
+        return saveCachedArticle(articleUrl, title, symbol, summaryPointsJson, sentiment, confidencePct, reason, publishedAt, analyzedAt, author, source, originalSummary, bannerImage, originalTitle, displayTitleVi, null, bulletPointsVi);
+    }
+
+    @Transactional
+    public Optional<NewsAiCache> saveCachedArticle(String articleUrl,
+                                                  String title,
+                                                  String symbol,
+                                                  String summaryPointsJson,
+                                                  String sentiment,
+                                                  BigDecimal confidencePct,
+                                                  String reason,
+                                                  LocalDateTime publishedAt,
+                                                  LocalDateTime analyzedAt,
+                                                  String author,
+                                                  String source,
+                                                  String originalSummary,
+                                                  String bannerImage,
+                                                  String originalTitle,
+                                                  String displayTitleVi,
+                                                  String displaySummaryVi,
+                                                  String bulletPointsVi) {
         if (articleUrl == null || articleUrl.isBlank()) {
             log.warn("Không thể lưu cache do articleUrl rỗng.");
             return Optional.empty();
         }
         String cleanUrl = articleUrl.trim();
 
-        // Chống trùng lặp theo articleUrl
+        // Chống trùng lặp theo articleUrl nhưng cho phép làm giàu lại nếu bài cũ thiếu displayTitleVi hoặc displaySummaryVi
         Optional<NewsAiCache> existing = repository.findByArticleUrl(cleanUrl);
         if (existing.isPresent()) {
-            log.debug("Bài báo đã tồn tại trong cache, bỏ qua: {}", cleanUrl);
+            NewsAiCache current = existing.get();
+            boolean needsReEnrichment = current.getDisplayTitleVi() == null
+                    || current.getDisplayTitleVi().isBlank()
+                    || current.getDisplaySummaryVi() == null
+                    || current.getDisplaySummaryVi().isBlank()
+                    || !NewsLocalizationQualityPolicy.isValidDisplayTitleVi(current.getDisplayTitleVi(), current.getOriginalTitle())
+                    || !NewsLocalizationQualityPolicy.isValidDisplaySummaryVi(current.getDisplaySummaryVi(), current.getOriginalSummary(), current.getDisplayTitleVi());
+
+            if (needsReEnrichment && displayTitleVi != null && NewsLocalizationQualityPolicy.isValidDisplayTitleVi(displayTitleVi, originalTitle)) {
+                current.setDisplayTitleVi(displayTitleVi.trim());
+                if (displaySummaryVi != null && !displaySummaryVi.isBlank()) {
+                    current.setDisplaySummaryVi(displaySummaryVi.trim());
+                }
+                if (bulletPointsVi != null && !bulletPointsVi.isBlank()) {
+                    current.setBulletPointsVi(bulletPointsVi.trim());
+                }
+                if (originalTitle != null && !originalTitle.isBlank()) {
+                    current.setOriginalTitle(originalTitle.trim());
+                }
+                if (originalSummary != null && !originalSummary.isBlank()) {
+                    current.setOriginalSummary(originalSummary.trim());
+                }
+                if (source != null && !source.isBlank()) {
+                    current.setSource(NewsPublisherResolver.resolvePublisher(source, cleanUrl));
+                }
+                NewsAiCache updated = repository.save(current);
+                log.info("LÀM GIÀU LẠI BẢN DỊCH CHO BÀI CACHE CŨ | id={} | url='{}' | titleVi='{}' | summaryVi='{}'",
+                        updated.getId(), cleanUrl, updated.getDisplayTitleVi(), updated.getDisplaySummaryVi());
+                return Optional.of(updated);
+            }
+            log.debug("Bài báo đã tồn tại trong cache với bản dịch hợp lệ, bỏ qua: {}", cleanUrl);
             return existing;
         }
+
+        String resolvedPublisher = NewsPublisherResolver.resolvePublisher(source, cleanUrl);
+        String finalOriginalTitle = (originalTitle != null && !originalTitle.isBlank())
+                ? originalTitle.trim()
+                : (title != null ? title.trim() : "");
+        String finalDisplayTitle = (displayTitleVi != null && !displayTitleVi.isBlank())
+                ? displayTitleVi.trim()
+                : null;
+        String finalDisplaySummary = (displaySummaryVi != null && !displaySummaryVi.isBlank())
+                ? displaySummaryVi.trim()
+                : null;
+        String finalBulletPointsVi = (bulletPointsVi != null && !bulletPointsVi.isBlank())
+                ? bulletPointsVi.trim()
+                : summaryPointsJson;
 
         NewsAiCache entity = new NewsAiCache();
         entity.setId(null); // Không dùng id cũ, để CSDL tự sinh identity
         entity.setArticleUrl(cleanUrl);
-        entity.setTitle(title != null ? title.trim() : "");
+        entity.setTitle(finalOriginalTitle); // Lưu tiêu đề gốc vào title
         entity.setSymbol(symbol != null && !symbol.isBlank() ? symbol.toUpperCase().trim() : "MARKET");
         entity.setSummaryPoints(summaryPointsJson);
         entity.setSentiment(sentiment != null ? sentiment : "NEUTRAL");
@@ -164,14 +249,55 @@ public class NewsCacheService {
         entity.setPublishedAt(publishedAt != null ? publishedAt : LocalDateTime.now());
         entity.setAnalyzedAt(analyzedAt != null ? analyzedAt : LocalDateTime.now());
         entity.setAuthor(author != null && !author.isBlank() ? author.trim() : null);
-        entity.setSource(source != null && !source.isBlank() ? source.trim() : null);
+        entity.setSource(resolvedPublisher);
         entity.setOriginalSummary(originalSummary != null && !originalSummary.isBlank() ? originalSummary.trim() : null);
         entity.setBannerImage(bannerImage != null && !bannerImage.isBlank() ? bannerImage.trim() : null);
-        entity.setOriginalTitle(originalTitle != null && !originalTitle.isBlank() ? originalTitle.trim() : null);
+        entity.setOriginalTitle(finalOriginalTitle); // Bảo toàn originalTitle độc lập
+        entity.setDisplayTitleVi(finalDisplayTitle);
+        entity.setDisplaySummaryVi(finalDisplaySummary);
+        entity.setBulletPointsVi(finalBulletPointsVi);
 
         NewsAiCache saved = repository.save(entity);
-        log.info("LƯU BÀI BÁO THẬT VÀO CSDL CACHE | id={} | url='{}' | sentiment={} | author='{}' | source='{}'",
-                saved.getId(), cleanUrl, sentiment, saved.getAuthor(), saved.getSource());
+        log.info("LƯU BÀI BÁO THẬT VÀO CSDL CACHE | id={} | url='{}' | sentiment={} | author='{}' | publisher='{}' | titleVi='{}'",
+                saved.getId(), cleanUrl, sentiment, saved.getAuthor(), saved.getSource(), saved.getDisplayTitleVi());
         return Optional.of(saved);
+    }
+
+    /**
+     * Dọn dẹp và chuẩn hóa các bản ghi cũ trong Cache mà không truncate bảng:
+     * - Cập nhật source generic ("Financial News", "Tin thị trường") thành publisher chuẩn dựa trên URL.
+     * - Bổ sung displayTitleVi nếu đang null.
+     */
+    @Transactional
+    public int cleanupLegacyCacheSources() {
+        List<NewsAiCache> all = repository.findAll();
+        int updatedCount = 0;
+        for (NewsAiCache item : all) {
+            boolean modified = false;
+            if (NewsPublisherResolver.isGeneric(item.getSource())) {
+                String resolved = NewsPublisherResolver.resolvePublisher(item.getSource(), item.getArticleUrl());
+                if (!resolved.equals(item.getSource())) {
+                    item.setSource(resolved);
+                    modified = true;
+                }
+            }
+            if ((item.getDisplayTitleVi() == null || item.getDisplayTitleVi().isBlank()) && item.getTitle() != null) {
+                String translated = NewsHeadlineTranslator.translateHeadline(item.getTitle());
+                item.setDisplayTitleVi(translated);
+                modified = true;
+            }
+            if ((item.getBulletPointsVi() == null || item.getBulletPointsVi().isBlank()) && item.getSummaryPoints() != null) {
+                item.setBulletPointsVi(item.getSummaryPoints());
+                modified = true;
+            }
+            if (modified) {
+                repository.save(item);
+                updatedCount++;
+            }
+        }
+        if (updatedCount > 0) {
+            log.info("CLEANUP CACHE | Đã chuẩn hóa thành công {} bản ghi cache tin tức cũ.", updatedCount);
+        }
+        return updatedCount;
     }
 }
