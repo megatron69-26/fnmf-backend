@@ -121,6 +121,24 @@ public class NewsCacheService {
                                                   String reason,
                                                   LocalDateTime publishedAt,
                                                   LocalDateTime analyzedAt) {
+        return saveCachedArticle(articleUrl, title, symbol, summaryPointsJson, sentiment, confidencePct, reason, publishedAt, analyzedAt, null, null, null, null, null);
+    }
+
+    @Transactional
+    public Optional<NewsAiCache> saveCachedArticle(String articleUrl,
+                                                  String title,
+                                                  String symbol,
+                                                  String summaryPointsJson,
+                                                  String sentiment,
+                                                  BigDecimal confidencePct,
+                                                  String reason,
+                                                  LocalDateTime publishedAt,
+                                                  LocalDateTime analyzedAt,
+                                                  String author,
+                                                  String source,
+                                                  String originalSummary,
+                                                  String bannerImage,
+                                                  String originalTitle) {
         if (articleUrl == null || articleUrl.isBlank()) {
             log.warn("Không thể lưu cache do articleUrl rỗng.");
             return Optional.empty();
@@ -145,9 +163,15 @@ public class NewsCacheService {
         entity.setReason(reason);
         entity.setPublishedAt(publishedAt != null ? publishedAt : LocalDateTime.now());
         entity.setAnalyzedAt(analyzedAt != null ? analyzedAt : LocalDateTime.now());
+        entity.setAuthor(author != null && !author.isBlank() ? author.trim() : null);
+        entity.setSource(source != null && !source.isBlank() ? source.trim() : null);
+        entity.setOriginalSummary(originalSummary != null && !originalSummary.isBlank() ? originalSummary.trim() : null);
+        entity.setBannerImage(bannerImage != null && !bannerImage.isBlank() ? bannerImage.trim() : null);
+        entity.setOriginalTitle(originalTitle != null && !originalTitle.isBlank() ? originalTitle.trim() : null);
 
         NewsAiCache saved = repository.save(entity);
-        log.info("LƯU BÀI BÁO THẬT VÀO CSDL CACHE | id={} | url='{}' | sentiment={}", saved.getId(), cleanUrl, sentiment);
+        log.info("LƯU BÀI BÁO THẬT VÀO CSDL CACHE | id={} | url='{}' | sentiment={} | author='{}' | source='{}'",
+                saved.getId(), cleanUrl, sentiment, saved.getAuthor(), saved.getSource());
         return Optional.of(saved);
     }
 }

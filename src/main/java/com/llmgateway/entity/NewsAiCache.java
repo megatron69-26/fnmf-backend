@@ -28,6 +28,21 @@ public class NewsAiCache {
     @Column(name = "SYMBOL", length = 20)
     private String symbol;
 
+    @Column(name = "AUTHOR", length = 255)
+    private String author;
+
+    @Column(name = "SOURCE", length = 255)
+    private String source;
+
+    @Column(name = "ORIGINAL_SUMMARY", columnDefinition = "TEXT")
+    private String originalSummary;
+
+    @Column(name = "BANNER_IMAGE", length = 500)
+    private String bannerImage;
+
+    @Column(name = "ORIGINAL_TITLE", length = 500)
+    private String originalTitle;
+
     @Column(name = "SUMMARY_POINTS", columnDefinition = "TEXT")
     private String summaryPoints; // JSON string chứa mảng các gạch đầu dòng
 
@@ -134,5 +149,45 @@ public class NewsAiCache {
 
     public void setAnalyzedAt(LocalDateTime analyzedAt) {
         this.analyzedAt = analyzedAt;
+    }
+
+    public String getAuthor() {
+        return author;
+    }
+
+    public void setAuthor(String author) {
+        this.author = author;
+    }
+
+    public String getSource() {
+        return source;
+    }
+
+    public void setSource(String source) {
+        this.source = source;
+    }
+
+    public String getOriginalSummary() {
+        return originalSummary;
+    }
+
+    public void setOriginalSummary(String originalSummary) {
+        this.originalSummary = originalSummary;
+    }
+
+    public String getBannerImage() {
+        return bannerImage;
+    }
+
+    public void setBannerImage(String bannerImage) {
+        this.bannerImage = bannerImage;
+    }
+
+    public String getOriginalTitle() {
+        return originalTitle;
+    }
+
+    public void setOriginalTitle(String originalTitle) {
+        this.originalTitle = originalTitle;
     }
 }

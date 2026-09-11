@@ -374,6 +374,12 @@ public class DataInitializer implements CommandLineRunner {
                 entity.setPublishedAt(pubDate);
                 entity.setAnalyzedAt(analyzedDate);
 
+                if (map.get("author") != null) entity.setAuthor(map.get("author").toString().trim());
+                if (map.get("source") != null) entity.setSource(map.get("source").toString().trim());
+                if (map.get("originalSummary") != null) entity.setOriginalSummary(map.get("originalSummary").toString().trim());
+                if (map.get("bannerImage") != null) entity.setBannerImage(map.get("bannerImage").toString().trim());
+                if (map.get("originalTitle") != null) entity.setOriginalTitle(map.get("originalTitle").toString().trim());
+
                 toSave.add(entity);
             }
 

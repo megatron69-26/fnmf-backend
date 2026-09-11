@@ -30,6 +30,7 @@ import java.sql.DatabaseMetaData;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -305,5 +306,172 @@ public class NewsServiceAndMigrationTest {
         assertNotNull(response.getBody());
         assertEquals(2, response.getBody().size(), "Mobile fallback MARKET phải trả chính xác tối đa limit = 2");
         assertEquals("NEWS_1", response.getBody().get(0).getNews().getNewsId());
+    }
+
+    @Test
+    @DisplayName("8. Migration V6 chứa đầy đủ các cột metadata và tóm tắt gốc cho news_ai_cache")
+    public void testMigrationV6ContainsRequiredColumns() throws Exception {
+        java.io.File v6File = new java.io.File("src/main/resources/db/migration/V6__add_news_metadata_and_summary_fields.sql");
+        assertTrue(v6File.exists(), "File V6 migration phải tồn tại");
+        String sql = java.nio.file.Files.readString(v6File.toPath());
+        assertTrue(sql.contains("author VARCHAR(255)"), "Phải có cột author");
+        assertTrue(sql.contains("source VARCHAR(255)"), "Phải có cột source");
+        assertTrue(sql.contains("original_summary TEXT"), "Phải có cột original_summary");
+        assertTrue(sql.contains("banner_image VARCHAR(500)"), "Phải có cột banner_image");
+        assertTrue(sql.contains("original_title VARCHAR(500)"), "Phải có cột original_title");
+        assertTrue(sql.contains("IF NOT EXISTS"), "Phải đảm bảo tính idempotent với IF NOT EXISTS");
+    }
+
+    @Test
+    @DisplayName("9. Cache lưu và bảo toàn toàn bộ metadata tác giả, nguồn, ảnh bìa, tóm tắt gốc")
+    public void testCachePreservesFullMetadata() {
+        when(newsAiCacheRepository.findByArticleUrl(anyString())).thenReturn(Optional.empty());
+        when(newsAiCacheRepository.save(any(NewsAiCache.class))).thenAnswer(i -> {
+            NewsAiCache entity = i.getArgument(0);
+            entity.setId(201L);
+            return entity;
+        });
+
+        Optional<NewsAiCache> saved = newsCacheService.saveCachedArticle(
+                "https://example.com/nvda-earnings",
+                "NVIDIA Reports Record Q3 Revenue",
+                "NVDA",
+                "[\"Doanh thu đạt mốc kỷ lục\", \"Nhu cầu chip AI tiếp tục bùng nổ\"]",
+                "BULLISH",
+                BigDecimal.valueOf(95),
+                "Tăng trưởng vượt bậc",
+                LocalDateTime.of(2026, 9, 9, 14, 0),
+                LocalDateTime.of(2026, 9, 9, 14, 5),
+                "Jane Doe",
+                "Reuters",
+                "NVIDIA reported record quarterly revenue driven by strong data center chip sales across global markets.",
+                "https://example.com/img/nvda.jpg",
+                "NVIDIA Reports Record Q3 Revenue"
+        );
+
+        assertTrue(saved.isPresent());
+        NewsAiCache entity = saved.get();
+        assertEquals("Jane Doe", entity.getAuthor());
+        assertEquals("Reuters", entity.getSource());
+        assertEquals("https://example.com/img/nvda.jpg", entity.getBannerImage());
+        assertEquals("NVIDIA Reports Record Q3 Revenue", entity.getOriginalTitle());
+        assertTrue(entity.getOriginalSummary().contains("data center chip sales"));
+    }
+
+    @Test
+    @DisplayName("10. Bản ghi Cache cũ thiếu tác giả sẽ trả về null/rỗng, tuyệt đối không bịa đặt tên tác giả")
+    public void testLegacyCacheWithoutAuthorDoesNotInventAuthor() {
+        NewsAiCache legacyItem = new NewsAiCache();
+        legacyItem.setId(301L);
+        legacyItem.setTitle("Federal Reserve Interest Rate Decision");
+        legacyItem.setArticleUrl("https://example.com/fed-decision");
+        legacyItem.setSymbol("MARKET");
+        legacyItem.setSummaryPoints("[\"Fed giữ nguyên lãi suất\", \"Thị trường kỳ vọng đợt cắt giảm cuối năm\"]");
+        legacyItem.setSentiment("NEUTRAL");
+        legacyItem.setConfidencePct(BigDecimal.valueOf(85));
+        legacyItem.setPublishedAt(LocalDateTime.now().minusHours(2));
+        legacyItem.setAuthor(null); // Không có tác giả trong cache cũ
+        legacyItem.setSource(null);
+
+        when(newsAiCacheRepository.findBySymbolOrderByPublishedAtDesc(eq("MARKET")))
+                .thenReturn(List.of(legacyItem));
+        when(newsAiCacheRepository.findTop10ByOrderByPublishedAtDesc())
+                .thenReturn(List.of(legacyItem));
+
+        List<NewsFeedItemDto> feed = aiNewsService.getLiveAiNewsFeed("MARKET", 1);
+        assertEquals(1, feed.size());
+        NewsFeedItemDto dto = feed.get(0);
+
+        assertNull(dto.getAuthor(), "Tác giả của cache cũ phải là null, không được tự ý gán là 'Financial News' hay 'Tin thị trường'");
+    }
+
+    @Test
+    @DisplayName("11. NewsSummaryQualityPolicy phát hiện và làm sạch các câu boilerplate khuôn mẫu")
+    public void testNewsSummaryQualityPolicyDetectsAndCleansBoilerplate() {
+        List<String> legacyBoilerplate = List.of(
+                "Trọng tâm tin tức: Apple ra mắt M4",
+                "Tác động thị trường: Kỳ vọng dòng tiền tiếp tục gia tăng.",
+                "Khuyến nghị FNMF: Theo dõi phản ứng giá tại các mốc hỗ trợ và kháng cự then chốt."
+        );
+
+        assertTrue(com.llmgateway.service.NewsSummaryQualityPolicy.hasBoilerplateBullets(legacyBoilerplate));
+
+        String title = "Apple Unveils New M4 Chip For Pro Macs";
+        String summary = "Apple today announced its latest M4 family of chips with significant neural engine upgrades. The new processors are built on second-generation 3nm technology and offer 50 percent faster CPU performance.";
+
+        List<String> sanitized = com.llmgateway.service.NewsSummaryQualityPolicy.sanitizeBullets(legacyBoilerplate, title, summary);
+
+        assertFalse(com.llmgateway.service.NewsSummaryQualityPolicy.hasBoilerplateBullets(sanitized));
+        assertTrue(sanitized.size() >= 2 && sanitized.size() <= 4, "Số gạch đầu dòng phải từ 2 đến 4 ý");
+        for (String bullet : sanitized) {
+            assertFalse(bullet.startsWith("Trọng tâm tin tức:"));
+            assertFalse(bullet.startsWith("Tác động thị trường:"));
+            assertFalse(bullet.startsWith("Khuyến nghị FNMF:"));
+        }
+    }
+
+    @Test
+    @DisplayName("12. Phân tích Heuristic trích xuất 2-4 câu sự kiện thật, không sinh văn phong khuyến nghị giả")
+    public void testHeuristicExtractsFactualSentences() {
+        com.llmgateway.dto.news.NewsAnalysisRequest req = new com.llmgateway.dto.news.NewsAnalysisRequest(
+                "Bitcoin Surges Past 70K on Institutional Inflows",
+                "Bitcoin broke past the seventy thousand dollar mark on Monday as spot ETF inflows hit a three-month high. Major asset managers reported net positive subscriptions across all funds.",
+                "BTCUSDT",
+                "https://example.com/btc-70k"
+        );
+
+        when(newsAiCacheRepository.findByArticleUrl(anyString())).thenReturn(Optional.empty());
+        when(newsAiCacheRepository.findByTitle(anyString())).thenReturn(Optional.empty());
+
+        com.llmgateway.dto.news.NewsAnalysisResponse res = aiNewsService.analyzeNews(req);
+
+        assertNotNull(res);
+        assertNotNull(res.getSummary());
+        assertTrue(res.getSummary().size() >= 2 && res.getSummary().size() <= 4);
+        for (String bullet : res.getSummary()) {
+            assertFalse(bullet.startsWith("Trọng tâm tin tức:"));
+            assertFalse(bullet.startsWith("Tác động thị trường:"));
+            assertFalse(bullet.startsWith("Khuyến nghị FNMF:"));
+        }
+    }
+
+    @Test
+    @DisplayName("13. Endpoint /api/news/sync trả về bulletPoints từ 2 đến 4 ý và giữ đúng author/source")
+    public void testSyncEndpointReturnsCorrectBulletsAndMetadata() {
+        NewsAiCache item = new NewsAiCache();
+        item.setId(401L);
+        item.setTitle("Tesla Expands Supercharger Network");
+        item.setArticleUrl("https://example.com/tesla-supercharger");
+        item.setSymbol("TSLA");
+        item.setSummaryPoints("[\"Tesla mở rộng thêm 500 trạm sạc mới\", \"Mạng lưới sạc hỗ trợ chuẩn NACS toàn cầu\"]");
+        item.setSentiment("BULLISH");
+        item.setConfidencePct(BigDecimal.valueOf(92));
+        item.setPublishedAt(LocalDateTime.of(2026, 9, 9, 10, 0));
+        item.setAuthor("Elon Team");
+        item.setSource("Bloomberg");
+        item.setBannerImage("https://example.com/tsla.jpg");
+        item.setOriginalSummary("Tesla announced a nationwide expansion of its Supercharger network today, adding 500 ultra-fast stalls.");
+
+        when(newsAiCacheRepository.findBySymbolOrderByPublishedAtDesc(eq("TSLA")))
+                .thenReturn(List.of(item));
+        when(newsAiCacheRepository.findTop10ByOrderByPublishedAtDesc())
+                .thenReturn(List.of(item));
+
+        com.llmgateway.controller.NewsAiController controller = new com.llmgateway.controller.NewsAiController(aiNewsService);
+        ResponseEntity<Map<String, Object>> response = controller.getSyncNewsFeed("TSLA", 5);
+
+        assertEquals(200, response.getStatusCode().value());
+        Map<String, Object> body = response.getBody();
+        assertNotNull(body);
+        List<Map<String, Object>> data = (List<Map<String, Object>>) body.get("data");
+        assertEquals(1, data.size());
+
+        Map<String, Object> first = data.get(0);
+        assertEquals("Elon Team", first.get("author"));
+        assertEquals("Bloomberg", first.get("source"));
+        assertEquals("https://example.com/tsla.jpg", first.get("imageUrl"));
+        List<String> bullets = (List<String>) first.get("bulletPoints");
+        assertNotNull(bullets);
+        assertTrue(bullets.size() >= 2 && bullets.size() <= 4);
     }
 }

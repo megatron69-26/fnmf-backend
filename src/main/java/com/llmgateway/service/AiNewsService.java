@@ -96,10 +96,18 @@ public class AiNewsService {
                 dto.setTitle(c.getTitle());
                 dto.setUrl(c.getArticleUrl());
                 dto.setTimePublished(c.getPublishedAt() != null ? c.getPublishedAt().toString() : "");
-                dto.setSummary(c.getTitle());
-                dto.setSource("Financial News");
+                String originalSummary = (c.getOriginalSummary() != null && !c.getOriginalSummary().isBlank())
+                        ? c.getOriginalSummary()
+                        : c.getTitle();
+                dto.setSummary(originalSummary);
+                dto.setSource((c.getSource() != null && !c.getSource().isBlank()) ? c.getSource() : "Financial News");
+                dto.setBannerImage(c.getBannerImage());
+                dto.setAuthor(c.getAuthor()); // Giữ nguyên author từ cache, nếu null thì để null/rỗng, tuyệt đối không bịa đặt tác giả
                 dto.setCategory("Market");
-                dto.setAiSummary(parseSummaryPoints(c.getSummaryPoints()));
+
+                List<String> rawBullets = parseSummaryPoints(c.getSummaryPoints());
+                List<String> sanitizedBullets = NewsSummaryQualityPolicy.sanitizeBullets(rawBullets, c.getTitle(), originalSummary);
+                dto.setAiSummary(sanitizedBullets);
                 dto.setAiSentiment(c.getSentiment());
                 dto.setAiConfidence(c.getConfidencePct() != null ? c.getConfidencePct().intValue() : 85);
                 dto.setAiReason(c.getReason());
@@ -128,11 +136,22 @@ public class AiNewsService {
             if (cachedOpt.isPresent()) {
                 // Đã có trong CSDL Cache -> Nạp từ DB trong < 5ms
                 NewsAiCache cached = cachedOpt.get();
-                item.setAiSummary(parseSummaryPoints(cached.getSummaryPoints()));
+                List<String> rawBullets = parseSummaryPoints(cached.getSummaryPoints());
+                List<String> sanitizedBullets = NewsSummaryQualityPolicy.sanitizeBullets(rawBullets, cached.getTitle(), item.getSummary());
+                item.setAiSummary(sanitizedBullets);
                 item.setAiSentiment(cached.getSentiment());
                 item.setAiConfidence(cached.getConfidencePct() != null ? cached.getConfidencePct().intValue() : 85);
                 item.setAiReason(cached.getReason());
                 item.setFromCache(true);
+                if (cached.getAuthor() != null && !cached.getAuthor().isBlank() && (item.getAuthor() == null || item.getAuthor().isBlank())) {
+                    item.setAuthor(cached.getAuthor());
+                }
+                if (cached.getSource() != null && !cached.getSource().isBlank() && (item.getSource() == null || item.getSource().isBlank() || "Financial News".equals(item.getSource()))) {
+                    item.setSource(cached.getSource());
+                }
+                if (cached.getBannerImage() != null && !cached.getBannerImage().isBlank() && (item.getBannerImage() == null || item.getBannerImage().isBlank())) {
+                    item.setBannerImage(cached.getBannerImage());
+                }
             } else {
                 // Bài báo mới -> Gửi sang Gemini AI phân tích (HTTP call, không giữ DB transaction)
                 NewsAnalysisRequest aiReq = new NewsAnalysisRequest(item.getTitle(), item.getSummary(), symbol, item.getUrl());
@@ -144,7 +163,7 @@ public class AiNewsService {
                 item.setAiReason(aiRes.getReason());
                 item.setFromCache(false);
 
-                // Lưu vào CSDL Cache qua NewsCacheService độc lập
+                // Lưu vào CSDL Cache qua NewsCacheService độc lập kèm đầy đủ metadata
                 LocalDateTime pubDate = parseAlphaVantageTimestamp(item.getTimePublished());
                 try {
                     newsCacheService.saveCachedArticle(
@@ -156,7 +175,12 @@ public class AiNewsService {
                             BigDecimal.valueOf(item.getAiConfidence() != null ? item.getAiConfidence() : 85),
                             item.getAiReason(),
                             pubDate,
-                            LocalDateTime.now()
+                            LocalDateTime.now(),
+                            item.getAuthor(),
+                            item.getSource(),
+                            item.getSummary(),
+                            item.getBannerImage(),
+                            item.getTitle()
                     );
                 } catch (Exception e) {
                     log.warn("Không thể lưu cache: {}", e.getMessage());
@@ -189,10 +213,12 @@ public class AiNewsService {
 
         if (cachedOpt.isPresent()) {
             NewsAiCache cached = cachedOpt.get();
+            List<String> rawBullets = parseSummaryPoints(cached.getSummaryPoints());
+            List<String> sanitizedBullets = NewsSummaryQualityPolicy.sanitizeBullets(rawBullets, cached.getTitle(), request.getContent());
             return new NewsAnalysisResponse(
                     cached.getTitle(),
                     cached.getSymbol(),
-                    parseSummaryPoints(cached.getSummaryPoints()),
+                    sanitizedBullets,
                     cached.getSentiment(),
                     cached.getConfidencePct() != null ? cached.getConfidencePct().intValue() : 85,
                     cached.getReason(),
@@ -213,7 +239,12 @@ public class AiNewsService {
                     BigDecimal.valueOf(aiResult.getConfidence()),
                     aiResult.getReason(),
                     LocalDateTime.now(),
-                    LocalDateTime.now()
+                    LocalDateTime.now(),
+                    null,
+                    null,
+                    request.getContent(),
+                    null,
+                    title
             );
         } catch (Exception e) {
             log.error("Không thể lưu cache: {}", e.getMessage());
@@ -320,13 +351,15 @@ public class AiNewsService {
             Bạn là Chuyên gia Phân tích Tài chính và Tâm lý Thị trường cấp cao của hệ thống FNMF.
             Dữ liệu đầu vào là một bài báo tài chính THỰC TẾ từ nguồn tin quốc tế.
             Nhiệm vụ của bạn:
-            1. Tóm tắt nội dung bài báo thành 3 gạch đầu dòng súc tích, làm nổi bật thông tin then chốt.
-            2. Đánh giá tác động đến giá tài sản (%s) theo 3 nhãn:
+            1. Tóm tắt nội dung bài báo thành từ 2 đến 4 gạch đầu dòng súc tích bằng tiếng Việt, tập trung vào số liệu thực tế, tên doanh nghiệp/tài sản, mốc thời gian hoặc sự kiện kinh tế cụ thể.
+            2. Tuyệt đối KHÔNG sử dụng các câu mở đầu khuôn mẫu như "Trọng tâm tin tức:", "Tác động thị trường:", "Khuyến nghị FNMF:".
+            3. Tuyệt đối KHÔNG đưa ra khuyến nghị mua bán tài chính cá nhân.
+            4. Đánh giá tác động đến giá tài sản (%s) theo 3 nhãn:
                - BULLISH (Cơ hội / Tín hiệu tăng giá)
                - BEARISH (Rủi ro / Tín hiệu giảm giá)
                - NEUTRAL (Trung lập / Đi ngang / Ít tác động)
-            3. Đưa ra chỉ số độ tin cậy (từ 0 đến 100).
-            4. Viết 1-2 câu ngắn gọn giải thích lý do dựa trên bối cảnh kinh tế.
+            5. Đưa ra chỉ số độ tin cậy (từ 0 đến 100).
+            6. Viết 1-2 câu ngắn gọn giải thích lý do dựa trên bối cảnh kinh tế.
             
             QUY TẮC BẮT BUỘC:
             - Trả về DUY NHẤT một chuỗi JSON hợp lệ.
@@ -335,7 +368,7 @@ public class AiNewsService {
             
             Định dạng JSON yêu cầu:
             {
-              "summary": ["Ý 1", "Ý 2", "Ý 3"],
+              "summary": ["Ý thực chất 1", "Ý thực chất 2", "Ý thực chất 3"],
               "sentiment": "BULLISH",
               "confidence": 90,
               "reason": "Giải thích ngắn gọn lý do."
@@ -382,6 +415,7 @@ public class AiNewsService {
                         summary.add(item.asText());
                     }
                 }
+                summary = NewsSummaryQualityPolicy.sanitizeBullets(summary, request.getTitle(), request.getContent());
                 String sentiment = parsedJson.path("sentiment").asText("NEUTRAL").toUpperCase();
                 int confidence = parsedJson.path("confidence").asInt(85);
                 String reason = parsedJson.path("reason").asText("Phân tích từ dữ liệu tin tức kinh tế.");
@@ -447,11 +481,7 @@ public class AiNewsService {
             reason = "Dữ liệu kinh tế ở trạng thái cân bằng, thị trường chưa có đột biến xu hướng rõ rệt.";
         }
 
-        List<String> summary = List.of(
-                "Trọng tâm tin tức: " + request.getTitle(),
-                "Tác động thị trường: " + (sentiment.equals("BULLISH") ? "Kỳ vọng dòng tiền tiếp tục gia tăng." : sentiment.equals("BEARISH") ? "Áp lực điều chỉnh ngắn hạn." : "Thị trường biến động trong biên độ hẹp."),
-                "Khuyến nghị FNMF: Theo dõi phản ứng giá tại các mốc hỗ trợ và kháng cự then chốt."
-        );
+        List<String> summary = NewsSummaryQualityPolicy.extractFactualBullets(request.getTitle(), request.getContent());
 
         return new NewsAnalysisResponse(request.getTitle(), request.getSymbol(), summary, sentiment, confidence, reason, false);
     }
