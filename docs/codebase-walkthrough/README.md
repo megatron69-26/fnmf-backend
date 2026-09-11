@@ -288,7 +288,7 @@ Toàn bộ các lỗi nghiêm trọng về tính đúng đắn dữ liệu và h
 | **Nguồn nến & Giá Live** | Alpha Vantage API | Binance REST API & WebSocket | **Replaced by another technology** | Tránh giới hạn 5 req/phút của Alpha Vantage; nến Klines và WebSocket trực tiếp đạt độ trễ < 100ms. |
 | **Dữ liệu Dầu thô (USOIL)** | Hỗ trợ giao dịch dầu WTI | Tạm loại bỏ (HTTP 422) | **Not implemented (Deferred)** | Không dùng giá giả mô phỏng; từ chối giao dịch an toàn cho tới khi có nguồn cấp dữ liệu WTI thật. |
 | **Chế độ mất kết nối thị trường** | Sinh nến Sin Wave + Random Walk | Trả HTTP 503 hoặc Cache thật (`stale=true`) | **Replaced by another technology** | Tuân thủ chính sách Zero-Fake: Tuyệt đối không sinh dữ liệu tài chính giả mạo. |
-| **Phân tích Tin tức AI** | Alpha Vantage + Gemini AI | Alpha Vantage + Gemini + Cache 2 lớp + Room DB | **Implemented** | Tối ưu chi phí và độ trễ phản hồi (< 5ms khi có cache). Hỗ trợ đọc offline qua Room DB. |
+| **Phân tích Tin tức AI** | Alpha Vantage + Gemini AI | Alpha Vantage + Gemini + Cache CSDL + Room DB | **Implemented** | Tối ưu chi phí và độ trễ phản hồi khi có cache. Hỗ trợ đọc offline qua Room DB. |
 | **Dự báo Thị trường AI** | Google Gemini AI | Gemini AI + Định lượng Heuristic Fallback | **Implemented** | Cung cấp tín hiệu, vùng hỗ trợ/kháng cự và điểm tin cậy; dự phòng Heuristic khi Gemini gián đoạn. |
 | **Paper Trading** | Đặt lệnh Mua/Bán ảo | Đặt lệnh với Pessimistic Lock & Idempotency | **Implemented** | Khóa bi quan chống Race Condition và `clientOrderId` (UUID) bảo đảm không trùng lặp lệnh. |
 | **Danh mục theo dõi (Watchlist)** | Danh sách yêu thích | Cloud CRUD + Phân lập Room DB theo User | **Implemented** | Đầy đủ GET, POST, DELETE `/api/watchlist`; dữ liệu cache Room phân tách theo `userEmail`. |

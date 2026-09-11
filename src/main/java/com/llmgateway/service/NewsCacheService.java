@@ -265,8 +265,11 @@ public class NewsCacheService {
 
     /**
      * Dọn dẹp và chuẩn hóa các bản ghi cũ trong Cache mà không truncate bảng:
-     * - Cập nhật source generic ("Financial News", "Tin thị trường") thành publisher chuẩn dựa trên URL.
-     * - Bổ sung displayTitleVi nếu đang null.
+     * - Cập nhật source generic ("Financial News", "Tin thị trường") thành publisher chuẩn dựa trên URL một cách null-safe.
+     * - Nếu không thể phân giải source (URL rỗng/sai), đặt source thành null/rỗng.
+     * - KHÔNG dùng cleanup để tự điền displayTitleVi bằng regex.
+     * - KHÔNG sao chép summaryPoints legacy sang bulletPointsVi rồi coi đó là kết quả Gemini.
+     * - Cache legacy thiếu bản dịch phải được giữ nguyên để chờ Gemini làm giàu khi có request.
      */
     @Transactional
     public int cleanupLegacyCacheSources() {
@@ -276,19 +279,18 @@ public class NewsCacheService {
             boolean modified = false;
             if (NewsPublisherResolver.isGeneric(item.getSource())) {
                 String resolved = NewsPublisherResolver.resolvePublisher(item.getSource(), item.getArticleUrl());
-                if (!resolved.equals(item.getSource())) {
-                    item.setSource(resolved);
-                    modified = true;
+                if (resolved != null && !resolved.isBlank()) {
+                    if (!resolved.equals(item.getSource())) {
+                        item.setSource(resolved);
+                        modified = true;
+                    }
+                } else {
+                    // Nếu không phân giải được (URL null hoặc sai), làm sạch source generic thành null
+                    if (item.getSource() != null) {
+                        item.setSource(null);
+                        modified = true;
+                    }
                 }
-            }
-            if ((item.getDisplayTitleVi() == null || item.getDisplayTitleVi().isBlank()) && item.getTitle() != null) {
-                String translated = NewsHeadlineTranslator.translateHeadline(item.getTitle());
-                item.setDisplayTitleVi(translated);
-                modified = true;
-            }
-            if ((item.getBulletPointsVi() == null || item.getBulletPointsVi().isBlank()) && item.getSummaryPoints() != null) {
-                item.setBulletPointsVi(item.getSummaryPoints());
-                modified = true;
             }
             if (modified) {
                 repository.save(item);

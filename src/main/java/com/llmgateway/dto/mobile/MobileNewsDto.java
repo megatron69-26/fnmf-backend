@@ -6,7 +6,7 @@ package com.llmgateway.dto.mobile;
  * Mapping:
  *   Room (Mạnh)          ←→  Backend (Khôi)
  *   ────────────────────────────────────────
- *   newsId (String PK)   ←   "NEWS_" + id (Long từ Oracle NEWS_AI_CACHE)
+ *   newsId (String PK)   ←   "NEWS_" + id (Long từ NEWS_AI_CACHE)
  *   title  (String)      ←   title (từ NEWS_AI_CACHE)
  *   url    (String)      ←   articleUrl (từ NEWS_AI_CACHE)
  *   publishedAt (long)   ←   publishedAt (TIMESTAMP → Unix epoch millis)

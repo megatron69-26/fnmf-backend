@@ -10,7 +10,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 /**
- * Entity ánh xạ với bảng WALLETS trong Oracle Database.
+ * Entity ánh xạ với bảng WALLETS trong Database.
  * Quản lý ví vốn ảo cho tính năng Paper Trading.
  */
 @Entity

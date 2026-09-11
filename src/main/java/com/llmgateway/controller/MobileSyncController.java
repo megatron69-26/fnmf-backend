@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
@@ -31,11 +32,11 @@ import java.util.stream.Collectors;
  *   - MobileAiAnalysisDto ←→  Room Entity "AI_Analysis" (newsId, summary, sentiment, confidenceScore, reason)
  *
  * Luồng xử lý:
- *   1. Đọc dữ liệu từ Oracle DB (NEWS_AI_CACHE) - cùng nguồn duy nhất với /api/news/feed
+ *   1. Đọc dữ liệu từ CSDL (NEWS_AI_CACHE) - cùng nguồn duy nhất với /api/news/feed
  *   2. Chuyển đổi (map) các trường sang đúng format Room DB của Mạnh
  *   3. Trả JSON cho Android → Android insert thẳng vào Room DB → Hiển thị Offline
  *
- * ĐẢM BẢO: KHÔNG GÂY XUNG ĐỘT VỚI CÁC API GỐC CỦA KHÔI (gateway2).
+ * ĐẢM BẢO: KHÔNG GÂY XUNG ĐỘT VỚI CÁC API GỐC CỦA KHÔI.
  * ===========================================================================================
  */
 @RestController
@@ -64,44 +65,58 @@ public class MobileSyncController {
                     "trả về format JSON khớp 100% với Room Entity News & AI_Analysis của bạn Mạnh. " +
                     "Android chỉ cần gọi API này rồi insert thẳng vào Room DB để hiển thị offline."
     )
-    public ResponseEntity<List<MobileNewsBundleResponse>> syncNewsForMobile(
+    public ResponseEntity<?> syncNewsForMobile(
             @RequestParam(required = false) String symbol,
-            @RequestParam(defaultValue = "5") int limit) {
+            @RequestParam(defaultValue = "" + AiNewsService.DEFAULT_LIMIT) int limit) {
 
-        int maxLimit = limit > 0 ? limit : 5;
-
-        // Bước 1: Lấy dữ liệu từ CSDL Cache qua NewsCacheService
-        List<NewsAiCache> cachedNews;
-        if (symbol != null && !symbol.isBlank()) {
-            cachedNews = newsCacheService.findBySymbolOrderByPublishedAtDesc(symbol, maxLimit);
-        } else {
-            cachedNews = newsCacheService.findTopByOrderByPublishedAtDesc(maxLimit);
+        if (!AiNewsService.isValidLimit(limit)) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "status", "error",
+                    "message", "Tham số limit phải nằm trong khoảng từ 1 đến " + AiNewsService.MAX_LIMIT,
+                    "data", List.of()
+            ));
         }
 
-        // Bước 2: Nếu cache rỗng, gọi pipeline live feed để nạp dữ liệu mới
-        if (cachedNews.isEmpty()) {
-            aiNewsService.getLiveAiNewsFeed(symbol, maxLimit);
+        try {
+            // Bước 1: Lấy dữ liệu từ CSDL Cache qua NewsCacheService
+            List<NewsAiCache> cachedNews;
             if (symbol != null && !symbol.isBlank()) {
-                cachedNews = newsCacheService.findBySymbolOrderByPublishedAtDesc(symbol, maxLimit);
+                cachedNews = newsCacheService.findBySymbolOrderByPublishedAtDesc(symbol, limit);
             } else {
-                cachedNews = newsCacheService.findTopByOrderByPublishedAtDesc(maxLimit);
+                cachedNews = newsCacheService.findTopByOrderByPublishedAtDesc(limit);
             }
-        }
 
-        // Bước 3: Nếu vẫn rỗng cho symbol cụ thể, fallback sang tin thị trường chung (MARKET)
-        if (cachedNews.isEmpty()) {
-            cachedNews = newsCacheService.findTopByOrderByPublishedAtDesc(maxLimit);
+            // Bước 2: Nếu cache rỗng, gọi pipeline live feed để nạp dữ liệu mới
             if (cachedNews.isEmpty()) {
-                cachedNews = newsCacheService.findAll(maxLimit);
+                aiNewsService.getLiveAiNewsFeed(symbol, limit);
+                if (symbol != null && !symbol.isBlank()) {
+                    cachedNews = newsCacheService.findBySymbolOrderByPublishedAtDesc(symbol, limit);
+                } else {
+                    cachedNews = newsCacheService.findTopByOrderByPublishedAtDesc(limit);
+                }
             }
+
+            // Bước 3: Nếu vẫn rỗng cho symbol cụ thể, fallback sang tin thị trường chung (MARKET)
+            if (cachedNews.isEmpty()) {
+                cachedNews = newsCacheService.findTopByOrderByPublishedAtDesc(limit);
+                if (cachedNews.isEmpty()) {
+                    cachedNews = newsCacheService.findAll(limit);
+                }
+            }
+
+            List<MobileNewsBundleResponse> result = cachedNews.stream()
+                    .limit(limit)
+                    .map(this::mapToMobileBundle)
+                    .collect(Collectors.toList());
+
+            return ResponseEntity.ok(result);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "status", "error",
+                    "message", e.getMessage() != null ? e.getMessage() : "Tham số limit không hợp lệ",
+                    "data", List.of()
+            ));
         }
-
-        List<MobileNewsBundleResponse> result = cachedNews.stream()
-                .limit(maxLimit)
-                .map(this::mapToMobileBundle)
-                .collect(Collectors.toList());
-
-        return ResponseEntity.ok(result);
     }
 
     /**
@@ -111,8 +126,8 @@ public class MobileSyncController {
      */
     @GetMapping("/{newsId}")
     @Operation(
-            summary = "Lấy chi tiết 1 bài báo theo newsId",
-            description = "Trả về News + AI_Analysis cho 1 bài báo cụ thể theo newsId (format NEWS_xxx)"
+            summary = "Lấy chi tiết 1 bài báo kèm AI Analysis theo News ID",
+            description = "Trả về chi tiết bài báo theo format Room Entity"
     )
     public ResponseEntity<MobileNewsBundleResponse> getNewsById(@PathVariable String newsId) {
         // Parse ID từ format "NEWS_xxx" → Long
@@ -143,9 +158,17 @@ public class MobileSyncController {
             summary = "Chỉ lấy danh sách AI Analysis (không kèm News)",
             description = "Trả về chỉ phần AI phân tích, format khớp 100% với Room Entity AI_Analysis"
     )
-    public ResponseEntity<List<MobileAiAnalysisDto>> getAnalysisOnly(
+    public ResponseEntity<?> getAnalysisOnly(
             @RequestParam(required = false) String symbol,
             @RequestParam(defaultValue = "10") int limit) {
+
+        if (!AiNewsService.isValidLimit(limit)) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "status", "error",
+                    "message", "Tham số limit phải nằm trong khoảng từ 1 đến " + AiNewsService.MAX_LIMIT,
+                    "data", List.of()
+            ));
+        }
 
         List<NewsAiCache> cachedNews = aiNewsService.getAllCachedNews();
 
@@ -160,11 +183,11 @@ public class MobileSyncController {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // PRIVATE MAPPER METHODS: Oracle Entity → Mạnh's Room DB Format
+    // PRIVATE MAPPER METHODS: Backend Entity → Room DB Format
     // ═══════════════════════════════════════════════════════════════
 
     /**
-     * Chuyển đổi 1 bản ghi Oracle NEWS_AI_CACHE → Bundle {News + AI_Analysis} cho Room DB.
+     * Chuyển đổi 1 bản ghi NEWS_AI_CACHE → Bundle {News + AI_Analysis} cho Room DB.
      */
     private MobileNewsBundleResponse mapToMobileBundle(NewsAiCache entity) {
         MobileNewsDto newsDto = mapToMobileNews(entity);
@@ -173,7 +196,7 @@ public class MobileSyncController {
     }
 
     /**
-     * Map: Oracle NEWS_AI_CACHE → Room Entity "News"
+     * Map: NEWS_AI_CACHE → Room Entity "News"
      *
      * Chuyển đổi:
      *   - id (Long)           → newsId (String "NEWS_xxx")
@@ -196,7 +219,7 @@ public class MobileSyncController {
     }
 
     /**
-     * Map: Oracle NEWS_AI_CACHE → Room Entity "AI_Analysis"
+     * Map: NEWS_AI_CACHE → Room Entity "AI_Analysis"
      *
      * Chuyển đổi:
      *   - id (Long)              → newsId (String "NEWS_xxx") ✅ FK MAPPING

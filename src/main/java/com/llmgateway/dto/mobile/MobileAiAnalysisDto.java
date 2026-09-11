@@ -7,7 +7,7 @@ package com.llmgateway.dto.mobile;
  *   Room (Mạnh)                ←→  Backend (Khôi)
  *   ─────────────────────────────────────────────────
  *   analysisId (int PK auto)   ←   (Server không cần trả, Room tự sinh)
- *   newsId (String FK)         ←   "NEWS_" + id (Long từ Oracle NEWS_AI_CACHE)
+ *   newsId (String FK)         ←   "NEWS_" + id (Long từ NEWS_AI_CACHE)
  *   summary (String)           ←   summaryPoints (CLOB → String đã join)
  *   sentiment (String)         ←   sentiment (BULLISH/BEARISH/NEUTRAL)
  *   confidenceScore (int)      ←   confidencePct (BigDecimal → int)

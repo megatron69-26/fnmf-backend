@@ -50,7 +50,7 @@ public class ForecastService {
     @Value("${openai.default-model:gemini-2.0-flash}")
     private String geminiModel;
 
-    // Thời gian cache dự báo trong CSDL Oracle (15 phút)
+    // Thời gian cache dự báo trong CSDL (15 phút)
     private static final int FORECAST_CACHE_MINUTES = 15;
 
     public ForecastService(MarketForecastRepository forecastRepository,
@@ -67,7 +67,7 @@ public class ForecastService {
     }
 
     // ====================================================================================
-    // 🎓 [CÂU HỎI BẢO VỆ ĐỒ ÁN: MÔ HÌNH DỰ BÁO AI KẾT HỢP ĐA CHIỀU (MULTI-FACTOR AI FORECAST)]
+    // BẢO VỆ ĐỒ ÁN: MÔ HÌNH DỰ BÁO AI KẾT HỢP ĐA CHIỀU (MULTI-FACTOR AI FORECAST)
     // ------------------------------------------------------------------------------------
     // CÂU HỎI CỦA GIẢNG VIÊN:
     //   "Mô hình dự báo thị trường (Market Forecasting) của nhóm hoạt động ra sao? Làm thế
@@ -76,15 +76,15 @@ public class ForecastService {
     // CÂU TRẢ LỜI CỦA MÃ NGUỒN (CODE TRẢ LỜI):
     //   1. THU THẬP DỮ LIỆU ĐA TẦNG:
     //      - Tầng Kỹ thuật: 30 cây nến OHLCV từ Binance (Module 1).
-    //      - Tầng Vĩ mô / Tâm lý: Các bài báo kinh tế mới nhất đã phân tích AI trong Oracle DB (Module 2).
+    //      - Tầng Vĩ mô / Tâm lý: Các bài báo kinh tế mới nhất đã phân tích AI trong CSDL (Module 2).
     //   2. AI FUSION ENGINE (GEMINI AI):
     //      - Đóng gói chuỗi nến + tin tức vào Prompt chuyên gia chiến lược định lượng.
     //      - Gemini AI tính toán vùng Hỗ trợ (Support), Kháng cự (Resistance), Xu hướng và
     //        Khuyến nghị (STRONG_BUY / BUY / HOLD / SELL).
-    //   3. BỘ NHỚ ĐỆM CSDL ORACLE (15 PHÚT):
-    //      - Lưu vào bảng `MARKET_FORECASTS`. Nếu gọi lại trong 15 phút, trả về ngay < 5ms.
-    //   4. DỰ PHÒNG AN TOÀN (HEURISTIC QUANT ENGINE):
-    //      - Nếu mất mạng AI, tự động kích hoạt thuật toán quán tính nến (EMA/Momentum) để trả kết quả.
+    //   3. BỘ NHỚ ĐỆM CSDL (15 PHÚT):
+    //      - Lưu vào bảng `MARKET_FORECASTS`. Nếu gọi lại trong 15 phút, trả về từ cache.
+    //   4. DỰ PHÒNG AN TOÀN (QUANTITATIVE TECHNICAL ENGINE):
+    //      - Nếu mất mạng AI, tự động kích hoạt thuật toán kỹ thuật dự phòng để trả kết quả.
     // ====================================================================================
     public ForecastResponse generateForecast(ForecastRequest request) {
         String cleanSymbol = request.getSymbol().trim().toUpperCase();
@@ -95,12 +95,12 @@ public class ForecastService {
             throw new MarketDataUnavailableException("Dữ liệu thị trường thời gian thực không khả dụng hoặc bị cũ (stale), không thể tạo dự báo AI cho mã: " + cleanSymbol);
         }
 
-        // 2. Kiểm tra CSDL Oracle xem có bản dự báo còn hạn (15 phút) không
+        // 2. Kiểm tra CSDL xem có bản dự báo còn hạn (15 phút) không
         Optional<MarketForecast> cachedOpt = forecastRepository.findTopBySymbolOrderByCreatedAtDesc(cleanSymbol);
         if (cachedOpt.isPresent()) {
             MarketForecast cached = cachedOpt.get();
             if (cached.getCreatedAt().isAfter(LocalDateTime.now().minusMinutes(FORECAST_CACHE_MINUTES))) {
-                log.info("LẤY DỰ BÁO TỪ ORACLE DB CACHE | symbol={} | recommendation={}", cleanSymbol, cached.getRecommendation());
+                log.info("LẤY DỰ BÁO TỪ DATABASE CACHE | symbol={} | recommendation={}", cleanSymbol, cached.getRecommendation());
                 return new ForecastResponse(
                         cached.getSymbol(),
                         priceDto.getName() != null ? priceDto.getName() : cleanSymbol,
@@ -281,17 +281,17 @@ public class ForecastService {
 
                 return new ForecastResponse(symbol, priceDto.getName(), priceDto.getPrice(), trend, timeframe, support, resistance, recommendation, confidence, drivers, techOutlook, fundOutlook, false, LocalDateTime.now());
             } else {
-                log.warn("Lỗi gọi Gemini API: status {}. Chuyển sang Heuristic Engine.", response.statusCode());
+                log.warn("Lỗi gọi Gemini API: status {}. Chuyển sang mô hình định lượng dự phòng.", response.statusCode());
                 return generateHeuristicForecast(symbol, priceDto, candles, recentNews, timeframe);
             }
         } catch (Exception e) {
-            log.warn("Lỗi phân tích dự báo qua Gemini: {}. Chuyển sang Heuristic Engine.", e.getMessage());
+            log.warn("Lỗi phân tích dự báo qua Gemini: {}. Chuyển sang mô hình định lượng dự phòng.", e.getMessage());
             return generateHeuristicForecast(symbol, priceDto, candles, recentNews, timeframe);
         }
     }
 
     // ====================================================================================
-    // 🛡️ [CHẾ ĐỘ DỰ PHÒNG - HEURISTIC QUANTITATIVE FORECASTING ENGINE]
+    // 🛡️ [CHẾ ĐỘ DỰ PHÒNG - QUANTITATIVE TECHNICAL FORECASTING ENGINE]
     // ------------------------------------------------------------------------------------
     // Thuật toán định lượng dự phòng: Tính toán các ngưỡng kỹ thuật và tâm lý tin tức
     // khi mất kết nối Google Gemini API, đảm bảo 100% không bao giờ Crash hệ thống.

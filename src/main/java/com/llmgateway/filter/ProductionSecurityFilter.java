@@ -74,6 +74,11 @@ public class ProductionSecurityFilter extends OncePerRequestFilter {
             return true;
         }
 
+        // 5. /api/news/diagnostics và mọi path con (chỉ cho phép dev/local, chặn trên prod)
+        if (normalized.equals("/api/news/diagnostics") || normalized.startsWith("/api/news/diagnostics/")) {
+            return true;
+        }
+
         return false;
     }
 }

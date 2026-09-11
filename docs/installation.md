@@ -50,7 +50,7 @@
 
 ## ⚙️ PHẦN 3: MỞ VÀ CHẠY DỰ ÁN TRÊN INTELLIJ IDEA
 
-* **Bước 1:** Mở **IntelliJ IDEA** $\rightarrow$ Chọn **Open** $\rightarrow$ Chọn thư mục **`llm-gateway2`** ngay trên màn hình Desktop.
+* **Bước 1:** Mở **IntelliJ IDEA** $\rightarrow$ Chọn **Open** $\rightarrow$ Chọn thư mục **`llm-gateway3`** ngay trên màn hình Desktop.
 * **Bước 2:** Cấu hình Java SDK *(Nếu thấy thanh màu vàng báo "Project JDK is not defined")*:
   * Bấm vào chữ xanh **Setup SDK** ở góc trên bên phải.
   * Chọn **17 (Eclipse Temurin 17...)**.

@@ -18,7 +18,7 @@ public class ForecastResponse {
     private List<String> keyDrivers;    // 3 gạch đầu dòng giải thích nguyên nhân
     private String technicalOutlook;    // Nhận định kỹ thuật (Nến, đường giá)
     private String fundamentalOutlook;  // Nhận định tin tức vĩ mô (FED, lạm phát, tin tức)
-    private boolean fromCache;          // true nếu lấy từ Oracle DB cache
+    private boolean fromCache;          // true nếu lấy từ database cache
     private LocalDateTime createdAt;
 
     public ForecastResponse() {

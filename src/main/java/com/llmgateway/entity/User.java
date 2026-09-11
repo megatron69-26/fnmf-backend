@@ -11,7 +11,7 @@ import jakarta.persistence.Table;
 import java.time.LocalDateTime;
 
 /**
- * Entity ánh xạ với bảng USERS trong Oracle Database.
+ * Entity ánh xạ với bảng USERS trong Database.
  */
 @Entity
 @Table(name = "USERS")

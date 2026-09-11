@@ -28,8 +28,7 @@ public class NewsFeedItemDto {
     private String aiSentiment;      // "BULLISH", "BEARISH", "NEUTRAL"
     private Integer aiConfidence;    // % Độ tin cậy từ 0 - 100
     private String aiReason;         // Lý do giải thích tác động thị trường từ Gemini
-    private boolean fromCache;       // true nếu đọc từ CSDL Oracle
-
+    private boolean fromCache;       // true nếu đọc từ CSDL cache
     public NewsFeedItemDto() {
     }
 

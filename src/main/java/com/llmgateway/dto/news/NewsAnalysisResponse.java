@@ -15,7 +15,7 @@ public class NewsAnalysisResponse {
     private String sentiment;        // "BULLISH", "BEARISH", "NEUTRAL"
     private Integer confidence;      // Độ tin cậy từ 0 - 100%
     private String reason;           // 1-2 câu giải thích nguyên nhân
-    private boolean fromCache;       // true nếu đọc từ CSDL Oracle, false nếu gọi Gemini AI mới
+    private boolean fromCache;       // true nếu đọc từ CSDL cache, false nếu gọi Gemini AI mới
 
     public NewsAnalysisResponse() {
     }

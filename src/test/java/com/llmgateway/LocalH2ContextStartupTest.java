@@ -21,7 +21,7 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 @SpringBootTest
 @TestPropertySource(properties = {
-        "spring.datasource.url=jdbc:h2:mem:fnmf_local_startup_test;DB_CLOSE_DELAY=-1;MODE=Oracle;DEFAULT_NULL_ORDERING=HIGH",
+        "spring.datasource.url=jdbc:h2:mem:fnmf_local_startup_test;DB_CLOSE_DELAY=-1;MODE=PostgreSQL;DEFAULT_NULL_ORDERING=HIGH",
         "spring.datasource.driver-class-name=org.h2.Driver",
         "spring.datasource.username=sa",
         "spring.datasource.password=",
@@ -66,4 +66,3 @@ public class LocalH2ContextStartupTest {
                 "application-phone.properties phải có spring.flyway.enabled=false để bảo vệ H2 phone");
     }
 }
-

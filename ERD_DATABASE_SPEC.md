@@ -191,4 +191,4 @@ erDiagram
 ---
 
 💡 **Gợi ý dành cho bạn:**  
-Bạn có thể gửi file [`ERD_DATABASE_SPEC.md`](file:///c:/Users/khoid/OneDrive/Desktop/llm-gateway2/ERD_DATABASE_SPEC.md) này cho bạn **Mạnh (Leader)** để Mạnh copy sơ đồ Mermaid và bảng từ điển dữ liệu dán thẳng vào **Báo cáo Đồ án Word** và **Slide Thuyết trình Bảo vệ Đồ án** mà không cần phải chỉnh sửa gì thêm!
+Bạn có thể gửi file [`ERD_DATABASE_SPEC.md`](ERD_DATABASE_SPEC.md) này cho bạn **Mạnh (Leader)** để Mạnh copy sơ đồ Mermaid và bảng từ điển dữ liệu dán thẳng vào **Báo cáo Đồ án Word** và **Slide Thuyết trình Bảo vệ Đồ án** mà không cần phải chỉnh sửa gì thêm!

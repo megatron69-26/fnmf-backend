@@ -1,131 +1,136 @@
-# 📊 DỰ ÁN FNMF BACKEND - TÀI LIỆU BÀN GIAO & TRẠNG THÁI TOÀN DIỆN (PROJECT STATUS & HANDOVER)
+# DU AN FNMF BACKEND - TAI LIEU BAN GIAO VA TRANG THAI TOAN DIEN (PROJECT STATUS & HANDOVER)
 
-> **Dành cho Lập trình viên và AI Agent kế thừa:**  
-> File này chứa toàn bộ thông tin kiến trúc, cấu hình môi trường, tài khoản kết nối, trạng thái các module đã hoàn thành và hướng dẫn tiếp tục dự án.  
-> **Quy tắc bắt buộc:** Mọi thay đổi hoặc cập nhật code trong tương lai **PHẢI** được cập nhật lại vào file này.
-
----
-
-## 1. THÔNG TIN THÀNH VIÊN & DỰ ÁN
-* **Tên đồ án:** FNMF - Financial News & Market Forecasting (Ứng dụng Tin tức Tài chính, Phân tích Cảm xúc AI & Giao dịch Giả lập).
-* **Thành viên phụ trách Backend/Data:** Đặng Đức Khôi (Member #3).
-* **Trưởng nhóm / PO / AI Prompt Engineer:** Nguyễn Hữu Mạnh (Member #1).
-* **Thành viên Android Mobile App:** Nguyễn Quang Hùng (Member #2).
-* **GitHub Repository:** [https://github.com/megatron69-26/fnmf-backend](https://github.com/megatron69-26/fnmf-backend)
-* **Hai thư mục dự án trên máy tính:**
-  1. `C:\Users\khoid\OneDrive\Desktop\llm-gateway2` *(Thư mục Git gốc)*
-  2. `C:\Users\khoid\OneDrive\Desktop\cloud engineer\llm-gateway2` *(Thư mục IntelliJ IDEA đang mở)*
-  *(Lưu ý: Luôn đồng bộ mã nguồn giữa 2 thư mục này).*
+> Danh cho Lap trinh vien va AI Agent ke thua:
+> File nay chua toan bo thong tin kien truc, cau hinh moi truong, tai khoan ket noi, trang thai cac module da hoan thanh va huong dan tiep tuc du an.
+> Quy tac bat buoc: Moi thay doi hoac cap nhat code trong tuong lai phai duoc cap nhat lai vao file nay.
 
 ---
 
-## 2. THÔNG SỐ MÔI TRƯỜNG & CẤU HÌNH HỆ THỐNG
-* **Ngôn ngữ & Framework:** Java 17 (Adoptium OpenJDK), Spring Boot 3.3.5, Maven.
-* **Cổng chạy Server:** `http://localhost:8082`
-* **Giao diện Tài liệu Swagger UI:** `http://localhost:8082/swagger-ui/index.html`
-* **Cơ sở dữ liệu:** Oracle Database 21c Express Edition (`localhost:1521/orcl`).
-  * **Username:** `khoi2`
-  * **Password:** `khoi2`
-  * **7 Bảng CSDL đã tạo:** `USERS`, `WALLETS`, `HOLDINGS`, `TRANSACTIONS`, `WATCHLISTS`, `NEWS_AI_CACHE`, `MARKET_FORECASTS`.
-* **API Keys & Dịch vụ bên ngoài:**
-  * **Alpha Vantage API Key (Market Data & Real News):** `ZRA0HCT8FR32ID39` (URL: `https://www.alphavantage.co/query`)
-  * **Google Gemini AI:** Model `gemini-2.0-flash` (Endpoint: `https://generativelanguage.googleapis.com/v1beta/openai/chat/completions`).
+## 1. THONG TIN THANH VIEN VA DU AN
+* Ten do an: FNMF - Financial News & Market Forecasting (Ung dung Tin tuc Tai chinh, Phan tich Cam xuc AI & Giao dich Gia lap).
+* Thanh vien phu trach Backend/Data: Dang Duc Khoi (Member #3).
+* Truong nhom / PO / AI Prompt Engineer: Nguyen Huu Manh (Member #1).
+* Thanh vien Android Mobile App: Nguyen Quang Hung (Member #2).
+* GitHub Repository: [https://github.com/megatron69-26/fnmf-backend](https://github.com/megatron69-26/fnmf-backend)
+* Thu muc du an tren may tinh:
+  * `llm-gateway3` (Thu muc ma nguon Backend hien hanh)
 
 ---
 
-## 3. TIẾN ĐỘ & TRẠNG THÁI CÁC MODULE (100% HOÀN THÀNH TOÀN BỘ 4 TUẦN)
-
-### ✅ TUẦN 1: HỆ THỐNG XÁC THỰC, PHÂN QUYỀN & VÍ TIỀN ẢO ($10,000)
-1. **`POST /api/auth/register`**: Đăng ký tài khoản, mã hóa mật khẩu 1 chiều bằng `BCryptPasswordEncoder` (Salt 10 vòng), tự động khởi tạo Ví ảo $10,000 vốn ban đầu trong bảng `WALLETS`.
-2. **`POST /api/auth/login`**: Đăng nhập, kiểm tra mật khẩu băm, sinh chuỗi `JWT Token` (HMAC-SHA256) có thời hạn 24 giờ.
-3. **`GET /api/auth/me`**: Lấy thông tin cá nhân và số dư ví bằng Bearer Token.
-
----
-
-### ✅ TUẦN 2: DỮ LIỆU THỊ TRƯỜNG, AI PHÂN TÍCH TIN TỨC, WATCHLIST & PAPER TRADING
-
-#### 📈 Module 1: Dữ liệu Thị trường & Nến Nhật (Market Data & Candlesticks)
-* **`GET /api/market/prices`**: Lấy giá thời gian thực của Bitcoin (`BTCUSDT`), Ethereum (`ETHUSDT`), Vàng (`XAUUSD`), Dầu thô (`USOIL`) từ Alpha Vantage.
-* **`GET /api/market/price/{symbol}`**: Lấy giá chi tiết của 1 mã tài sản.
-* **`GET /api/market/candles?symbol=BTCUSDT`**: Lấy chuỗi 30 cây nến OHLCV (Open, High, Low, Close, Volume) phục vụ Android vẽ Candlestick Chart.
-* **🛡️ Cơ chế bảo vệ:** In-Memory Cache (TTL 30s) chống tràn Rate Limit 5 calls/phút của Alpha Vantage + `generateFallbackCandles()` sinh nến toán học mô phỏng khi mất mạng.
-
-#### 🤖 Module 2: Pipeline Tin tức Thật & AI Phân tích Cảm xúc (AI News Sentiment & Oracle Cache)
-* **`GET /api/news/feed?limit=5`**: **Pipeline tự động 100%**:
-  1. Tự động lấy bài báo tài chính THẬT từ Alpha Vantage (`NEWS_SENTIMENT`).
-  2. Đưa nội dung thật qua Google Gemini AI với Fixed System Prompt chuyên gia tài chính.
-  3. Tự động gán nhãn `BULLISH` / `BEARISH` / `NEUTRAL`, độ tin cậy `%`, tóm tắt 3 ý và lý do.
-  4. Tự động lưu bài báo và kết quả AI vào bảng `NEWS_AI_CACHE` trong Oracle DB.
-  5. Trả về bài báo hoàn chỉnh (ảnh bìa, nguồn báo, phân tích AI) cho Android hiển thị.
-* **`POST /api/news/analyze`**: Phân tích bài báo tùy chỉnh.
-* **`GET /api/news/cache`**: Xem toàn bộ các bài báo đã được lưu trong CSDL Oracle.
-* **🛡️ Cơ chế bảo vệ:** **2-Layer Caching** (Oracle DB cache trả về trong < 5ms) + **Circuit Breaker Financial Heuristic Engine** (tự động phân tích theo từ khóa vĩ mô nếu Gemini bị lỗi/mất mạng).
-
-#### ⭐ Module 3: Quản lý Danh mục Theo dõi (Watchlist CRUD)
-* **`GET /api/watchlist`**: Lấy danh mục cá nhân của User (Bearer Token), tự động ghép giá thị trường và biến động 24h từ Alpha Vantage (0 Token AI).
-* **`GET /api/watchlist/ai-insights`** *(TÍNH NĂNG CÁ NHÂN HÓA)*:
-  Tự động quét toàn bộ các mã trong Watchlist của User $\rightarrow$ Gọi Gemini AI để lấy Dự báo chiến lược + Tin tức tóm tắt riêng cho danh mục yêu thích của User đó.
-* **`POST /api/watchlist`**: Thêm mã tài sản mới (Body: `{ "symbol": "ETHUSDT" }`), có kiểm tra chống trùng lặp.
-* **`DELETE /api/watchlist/{symbol}`**: Xóa mã khỏi danh mục theo dõi.
-
-#### 💼 Module 4: Giao dịch Giả lập & Quản lý Danh mục (Paper Trading & Realtime PnL)
-* **`POST /api/trade/order`**: Đặt lệnh MUA (`BUY`) hoặc BÁN (`SELL`) theo giá thị trường thời gian thực của Alpha Vantage.
-  * Tự động kiểm tra số dư ví khả dụng (chống âm tiền).
-  * Tự động tính Giá mua trung bình (DCA): `newAvgPrice = (oldCost + newCost) / (oldQty + newQty)`.
-  * Đảm bảo tính toàn vẹn **ACID (`@Transactional`)** trong Oracle DB.
-* **`GET /api/trade/portfolio`**: Lấy tổng quan tài sản ròng (Net Worth = Tiền mặt + Giá trị các mã đang nắm giữ) và Lời/Lỗ (PnL) thời gian thực.
-* **`GET /api/trade/history`**: Lấy toàn bộ lịch sử các lệnh Mua/Bán đã khớp trong bảng `TRANSACTIONS`.
+## 2. THONG SO MOI TRUONG VA CAU HINH HE THONG
+* Ngon ngu & Framework: Java 17 (Adoptium OpenJDK), Spring Boot 3.3.5, Maven.
+* Cong chay Server: `http://localhost:8082`
+* Giao dien Tai lieu Swagger UI (moi truong phat trien): `http://localhost:8082/swagger-ui/index.html`
+* Co so du lieu:
+  * Production: PostgreSQL tren Railway.
+  * Local / Testing: H2 in-memory che do tuong thich PostgreSQL (`MODE=PostgreSQL`).
+  * Cac bang CSDL: `USERS`, `WALLETS`, `HOLDINGS`, `TRANSACTIONS`, `WATCHLISTS`, `NEWS_AI_CACHE`, `MARKET_FORECASTS`, `PAYMENT_ORDERS`, `WALLET_LEDGER`, `PAYMENT_EVENTS`.
+* API Keys & Dich vu ben ngoai:
+  * Alpha Vantage API (Market Data & Real News): `https://www.alphavantage.co/query`
+  * Google Gemini AI: Model `gemini-2.5-flash` qua OpenAI-compatible endpoint (`https://generativelanguage.googleapis.com/v1beta/openai/chat/completions`).
 
 ---
 
-### ✅ TUẦN 3: TÍNH NĂNG NÂNG CAO & DỰ BÁO THỊ TRƯỜNG AI
+## 3. TIEN DO VA TRANG THAI CAC MODULE
 
-#### 🔮 Module 1: Dự báo Xu hướng & Tín hiệu Giao dịch AI (AI Market Forecasting)
-* **`GET /api/forecast/{symbol}?timeframe=24H_7D`**: Lấy phân tích dự báo xu hướng đa chiều cho mã tài sản.
-* **`POST /api/forecast/analyze`**: Tạo hoặc làm mới bản dự báo thị trường AI (Body: `{ "symbol": "XAUUSD" }`).
-* **`GET /api/forecast/history/{symbol}`**: Xem lịch sử các bản dự báo AI trong quá khứ của mã tài sản.
-* **`GET /api/forecast/latest`**: Lấy 10 bản dự báo AI mới nhất trong CSDL Oracle.
-* **🧠 Cơ chế hoạt động:** Kết hợp **30 nến kỹ thuật (Module 1)** + **Tin tức tâm lý vĩ mô gần nhất (Module 2)** gửi sang Gemini AI để tính toán Vùng Hỗ trợ (Support), Kháng cự (Resistance), Xu hướng và Khuyến nghị (`STRONG_BUY`, `BUY`, `HOLD`, `SELL`, `STRONG_SELL`).
-* **🛡️ Cơ chế bảo vệ:** Cache CSDL Oracle 15 phút (bảng `MARKET_FORECASTS`) + **Heuristic Quantitative Forecaster** dự phòng khi mất kết nối AI.
+### TUAN 1: HE THONG XAC THUC, PHAN QUYEN VA VI TIEN AO ($10,000)
+1. `POST /api/auth/register`: Dang ky tai khoan, ma hoa mat khau bang `BCryptPasswordEncoder` (Salt 10 vong), tu dong khoi tao Vi ao $10,000 von ban dau trong bang `WALLETS`.
+2. `POST /api/auth/login`: Dang nhap, kiem tra mat khau bam, sinh chuoi `JWT Token` (HMAC-SHA256) co thoi han 24 gio.
+3. `GET /api/auth/me`: Lay thong tin ca nhan va so du vi bang Bearer Token.
 
 ---
 
-### ✅ TUẦN 4: ĐÓNG GÓI, SWAGGER OPENAPI & HOÀN THIỆN ĐỒ ÁN
-1. **Swagger UI / OpenAPI 3.0 Integration:**
-   * Tích hợp `springdoc-openapi-starter-webmvc-ui` (v2.6.0).
-   * Tự động sinh tài liệu tại `http://localhost:8082/swagger-ui/index.html` với tính năng **Authorize JWT Bearer Token** trực tiếp trên web.
-2. **Postman Collection Export:**
-   * File [`fnmf_backend_postman_collection.json`](file:///c:/Users/khoid/OneDrive/Desktop/llm-gateway2/fnmf_backend_postman_collection.json) chứa toàn bộ 21 API có sẵn dữ liệu mẫu.
-3. **CORS & Global Exception Handling:**
-   * Cấu hình CORS mở toàn bộ trong `AppConfig.java` cho Android và Web.
-   * `GlobalExceptionHandler.java` bắt và chuẩn hóa mọi mã lỗi 400, 401, 500 thành JSON thân thiện.
+### TUAN 2: DU LIEU THI TRUONG, AI PHAN TICH TIN TUC, WATCHLIST VA PAPER TRADING
+
+#### Module 1: Du lieu Thi truong va Nen Nhat (Market Data & Candlesticks)
+* `GET /api/market/prices`: Lay gia thoi gian thuc cua Bitcoin (`BTCUSDT`), Ethereum (`ETHUSDT`), Vang (`XAUUSD`), Dau tho (`USOIL`) tu Alpha Vantage.
+* `GET /api/market/price/{symbol}`: Lay gia chi tiet cua 1 ma tai san.
+* `GET /api/market/candles?symbol=BTCUSDT`: Lay chuoi 30 cay nen OHLCV (Open, High, Low, Close, Volume) phuc vu Android ve bieu do nen MPAndroidChart.
+* Co che bao ve: In-Memory Cache (TTL 30s) chong tran Rate Limit 5 calls/phut cua Alpha Vantage. Khong su dung bat ky ham sinh nen toan hoc mo phong hay gia hardcode nao tren production backend.
+
+#### Module 2: Pipeline Tin tuc That va AI Phan tich Cam xuc (AI News Sentiment & PostgreSQL Cache)
+* Luong xu ly: Alpha Vantage -> Gemini -> PostgreSQL NEWS_AI_CACHE -> Android.
+* `GET /api/news/sync?limit=5` va `GET /api/news/feed?limit=5`:
+  1. Gioi han limit dong nhat tu 1 den 20 (`DEFAULT_LIMIT = 5`, `MAX_LIMIT = 20`). Ngoai pham vi tra ve HTTP 400 Bad Request.
+  2. Alpha Vantage fetch toi da 50 bai (`MAX_ALPHA_FETCH = 50`, `Math.min(limit * 3, 50)`).
+  3. Lay tin that tu Alpha Vantage (`NEWS_SENTIMENT`).
+  4. Dua qua Google Gemini AI (`gemini-2.5-flash`) voi System Prompt chuyen gia tai chinh de dich tieu de sang tieng Viet tu nhien va tom tat 2 den 4 gach dau dong su kien that.
+  5. Tu dong luu ket qua vao bang `NEWS_AI_CACHE` trong PostgreSQL.
+  6. Tra ve bai bao hoan chinh (tieu de tieng Viet, 2-4 bullet tieng Viet, publisher, author, thoi gian, anh bia).
+* Co che bao ve:
+  * Cache CSDL PostgreSQL: Cac bai da co ban dich tieng Viet hop le duoc phuc vu truc tiep tu CSDL ma khong can goi lai Gemini AI.
+  * Xu ly loi va Graceful Degradation: Khi Alpha Vantage hoac Gemini gap su co:
+    - Neu da co tin tieng Viet hop le trong Cache: tra ve tu Cache voi `status="ok"`.
+    - Neu khong co Cache va Alpha khong co tin: tra ve `status="empty"` minh bach.
+    - Neu khong co Cache va dich vu gap loi mang/rate limit/timeout: tra ve `status="degraded"` minh bach.
+    - Tuyet doi khong dung Regex thay the tu ngu, khong dung Heuristic bia dat noi dung, khong sinh du lieu gia.
+* `POST /api/news/analyze`: Phan tich bai bao tuy chinh.
+
+#### Module 3: Quan ly Danh muc Theo doi (Watchlist CRUD)
+* `GET /api/watchlist`: Lay danh muc ca nhan cua User (Bearer Token), tu dong ghep gia thi truong va bien dong 24h tu Alpha Vantage.
+* `GET /api/watchlist/ai-insights`: Quet toan bo cac ma trong Watchlist cua User de goi Gemini AI lay du bao chien luoc va tin tuc tom tat.
+* `POST /api/watchlist`: Them ma tai san moi (Body: `{ "symbol": "ETHUSDT" }`), kiem tra chong trung lap.
+* `DELETE /api/watchlist/{symbol}`: Xoa ma khoi danh muc theo doi.
+
+#### Module 4: Giao dich Gia lap va Quan ly Danh muc (Paper Trading & Realtime PnL)
+* `POST /api/trade/order`: Dat lenh MUA (`BUY`) hoac BAN (`SELL`) theo gia thi truong thoi gian thuc cua Alpha Vantage.
+  * Kiem tra so du vi kha dung (chong am tien).
+  * Tinh Gia mua trung binh (DCA): `newAvgPrice = (oldCost + newCost) / (oldQty + newQty)`.
+  * Dam bao tinh toan ven ACID (`@Transactional`) trong PostgreSQL.
+* `GET /api/trade/portfolio`: Lay tong quan tai san rong (Net Worth = Tien mat + Gia tri cac ma dang nam giu) va Loi/Lo (PnL) thoi gian thuc.
+* `GET /api/trade/history`: Lay toan bo lich su cac lenh Mua/Ban da khop trong bang `TRANSACTIONS`.
 
 ---
 
-### ✅ RELEASE V1.2.0: MODULE ĐỒNG BỘ MOBILE ROOM DATABASE (MOBILE SYNC)
-* **`GET /api/mobile/news/sync`**: Trả về Bundle `{ news, aiAnalysis }` chuẩn hóa cho Android Room DB của bạn Mạnh.
-* **`GET /api/mobile/news/{newsId}`**: Tra cứu bài báo theo `newsId` dạng chuỗi `"NEWS_xxx"`.
-* **`GET /api/mobile/news/analysis-only`**: Chỉ lấy bảng phân tích tâm lý thị trường cho Room DB.
-* **Kiến trúc 2 tầng (2-Tier Cache):** Server Oracle Database 21c (Khôi) $\leftrightarrow$ Mobile Room Database SQLite (Mạnh) $\rightarrow$ Hỗ trợ chế độ xem Ngoại tuyến (Offline Mode) 100% khi mất mạng.
+### TUAN 3: TINH NANG NANG CAO VA DU BAO THI TRUONG AI
+
+#### Module 1: Du bao Xu huong va Tin hieu Giao dich AI (AI Market Forecasting)
+* `GET /api/forecast/{symbol}?timeframe=24H_7D`: Lay phan tich du bao xu huong da chieu cho ma tai san.
+* `POST /api/forecast/analyze`: Tao hoac lam moi ban du bao thi truong AI (Body: `{ "symbol": "XAUUSD" }`).
+* `GET /api/forecast/history/{symbol}`: Xem lich su cac ban du bao AI trong qua khu cua ma tai san.
+* `GET /api/forecast/latest`: Lay 10 ban du bao AI moi nhat trong CSDL PostgreSQL.
+* Co che hoat dong: Ket hop 30 nen ky thuat va tin tuc vi mo gan nhat gui sang Gemini AI de xac dinh Vung Ho tro (Support), Khang cu (Resistance), Xu huong va Khuyen nghi (`STRONG_BUY`, `BUY`, `HOLD`, `SELL`, `STRONG_SELL`).
+* Co che bao ve: Cache CSDL PostgreSQL 15 phut (bang `MARKET_FORECASTS`) va mo hinh dinh luong ky thuat du phong khi mat ket noi AI.
 
 ---
 
-## 4. BỘ CÂU HỎI BẢO VỆ ĐỒ ÁN (DEFENSE Q&A CHEATSHEET)
+### TUAN 4: DONG GOI, SWAGGER OPENAPI VA HOAN THIEN HE THONG
+1. Swagger UI / OpenAPI 3.0 Integration:
+   * Tich hop `springdoc-openapi-starter-webmvc-ui` (v2.6.0).
+   * Tu dong sinh tai lieu tren moi truong dev/local tai `/swagger-ui/index.html` voi tinh nang Authorize JWT Bearer Token.
+   * `ProductionSecurityFilter` chan Swagger, OpenAPI docs, h2-console, va endpoint diagnostics tren profile `prod` bang HTTP 404.
+2. Postman Collection Export:
+   * File `fnmf_backend_postman_collection.json` tai goc repo chua toan bo danh muc API kem du lieu mau.
+3. CORS & Global Exception Handling:
+   * Cau hinh CORS mo trong `AppConfig.java` cho Android va Web Client.
+   * `GlobalExceptionHandler.java` bat va chuan hoa ma loi 400, 401, 404, 500 thanh JSON ro rang.
 
-| Câu hỏi của Giảng viên | Cách trả lời chuẩn | File & Vị trí Code |
+---
+
+### MODULE DONG BO MOBILE ROOM DATABASE (MOBILE SYNC)
+* `GET /api/mobile/news/sync`: Tra ve Bundle `{ news, aiAnalysis }` chuan hoa cho Android Room DB.
+* `GET /api/mobile/news/{newsId}`: Tra cuu bai bao theo `newsId` dang chuoi `"NEWS_xxx"`.
+* `GET /api/mobile/news/analysis-only`: Lay bang phan tich tam ly thi truong cho Room DB.
+* Kien truc dong bo: Server PostgreSQL (Khoi) ket noi Mobile Room Database SQLite (Manh) ho tro xem du lieu da dong bo khi offline.
+
+---
+
+## 4. BO CAU HOI BAO VE DO AN (DEFENSE Q&A CHEATSHEET)
+
+| Cau hoi | Cach tra loi chuan | Vi tri code tuong doi |
 | :--- | :--- | :--- |
-| **1. Mất mạng Gemini thì sao?** | Có cơ chế Fallback Circuit Breaker tự động chuyển sang Financial Heuristic Engine phân tích từ khóa, không bao giờ Crash app. | [`AiNewsService.java` (L280-L325)](file:///c:/Users/khoid/OneDrive/Desktop/llm-gateway2/src/main/java/com/llmgateway/service/AiNewsService.java#L280-L325) |
-| **2. Tối ưu chi phí & độ trễ AI?** | 2-Layer Caching với Oracle DB `NEWS_AI_CACHE`. Bài cũ nạp trong < 5ms với `fromCache: true`, chỉ gọi AI khi có tin mới. | [`AiNewsService.java` (L60-L90)](file:///c:/Users/khoid/OneDrive/Desktop/llm-gateway2/src/main/java/com/llmgateway/service/AiNewsService.java#L60-L90) |
-| **3. Alpha Vantage giới hạn 5 req/phút?** | In-Memory Cache (TTL 30s) + Thuật toán sinh nến mô phỏng `generateFallbackCandles()`. | [`MarketDataService.java` (L40-L65)](file:///c:/Users/khoid/OneDrive/Desktop/llm-gateway2/src/main/java/com/llmgateway/service/MarketDataService.java#L40-L65) |
-| **4. Tính toàn vẹn khớp lệnh ví ảo?** | `@Transactional` của Spring JPA + Kiểm tra số dư nghiêm ngặt, tự động Rollback nếu 1 bước lỗi. | [`TradeService.java` (L45-L95)](file:///c:/Users/khoid/OneDrive/Desktop/llm-gateway2/src/main/java/com/llmgateway/service/TradeService.java#L45-L95) |
-| **5. Công thức tính DCA & PnL?** | `newAvgPrice = (oldCost + newCost) / newQty`. PnL = `(CurrentPrice - AvgPrice) * Qty`. | [`TradeService.java` (L75-L88)](file:///c:/Users/khoid/OneDrive/Desktop/llm-gateway2/src/main/java/com/llmgateway/service/TradeService.java#L75-L88) |
-| **6. Mô hình Dự báo AI hoạt động thế nào?** | Kết hợp đa tầng: Nến 30 ngày (Kỹ thuật) + Tin tức vĩ mô (Tâm lý) qua Gemini AI để xác định Hỗ trợ/Kháng cự và Khuyến nghị mua/bán. | [`ForecastService.java` (L45-L90)](file:///c:/Users/khoid/OneDrive/Desktop/llm-gateway2/src/main/java/com/llmgateway/service/ForecastService.java#L45-L90) |
-| **7. Tài liệu API được quản lý ra sao?** | Tự động sinh bởi OpenAPI 3.0 / Swagger UI tại `/swagger-ui/index.html` và bộ file Postman Collection JSON. | [`OpenApiConfig.java`](file:///c:/Users/khoid/OneDrive/Desktop/llm-gateway2/src/main/java/com/llmgateway/config/OpenApiConfig.java) |
+| **1. Mat mang Gemini thi he thong xu ly ra sao?** | He thong ap dung Graceful Degradation: uu tien phuc vu cac ban tin da co ban dich tieng Viet chuan trong CSDL PostgreSQL; neu khong co cache va provider loi thi tra ve trang thai degraded/empty minh bach, tuyet doi khong crash app va khong bia dat du lieu. | `src/main/java/com/llmgateway/service/AiNewsService.java` |
+| **2. Toi uu chi phi va do tre AI?** | Cache CSDL PostgreSQL tai bang `NEWS_AI_CACHE`. Cac bai da duoc phan tich se duoc tai truc tiep tu CSDL voi co `fromCache: true`, chi goi AI khi phat hien bai bao moi. | `src/main/java/com/llmgateway/service/AiNewsService.java` |
+| **3. Alpha Vantage gioi han 5 req/phut?** | In-Memory Cache (TTL 30s) trong `MarketDataService` de tai su dung du lieu nen va gia, tranh vuot nguong request cua nha cung cap. | `src/main/java/com/llmgateway/service/MarketDataService.java` |
+| **4. Tinh toan ven khop lenh vi ao?** | Su dung `@Transactional` cua Spring JPA ket hop kiem tra so du nghiem ngat, dam bao tinh ACID va tu dong rollback neu xay ra loi. | `src/main/java/com/llmgateway/service/TradeService.java` |
+| **5. Cong thuc tinh DCA va PnL?** | `newAvgPrice = (oldCost + newCost) / newQty`. PnL = `(CurrentPrice - AvgPrice) * Qty`. | `src/main/java/com/llmgateway/service/TradeService.java` |
+| **6. Mo hinh Du bao AI hoat dong the nao?** | Ket hop du lieu nen ky thuat va tin tuc vi mo qua Gemini AI de xac dinh Ho tro/Khang cu va khuyen nghi giao dich. | `src/main/java/com/llmgateway/service/ForecastService.java` |
+| **7. Quan ly tai lieu API va bao mat production?** | OpenAPI 3.0 / Swagger UI phuc vu dev/local; tren production, `ProductionSecurityFilter` chan cac endpoint nhay cam (Swagger, H2, DB query, diagnostics) bang HTTP 404. | `src/main/java/com/llmgateway/filter/ProductionSecurityFilter.java` |
 
 ---
 
-## 5. HƯỚNG DẪN DÀNH CHO AGENT TIẾP THEO (AI AGENT INSTRUCTIONS)
-1. Khi tiếp tục dự án, hãy đọc kỹ file này trước tiên để nắm toàn bộ bối cảnh.
-2. Kiểm tra Oracle DB (`localhost:1521/orcl`) và port `8082` trước khi chạy lệnh.
-3. Khi chỉnh sửa mã nguồn, luôn đồng bộ giữa `C:\Users\khoid\OneDrive\Desktop\llm-gateway2` và `C:\Users\khoid\OneDrive\Desktop\cloud engineer\llm-gateway2`.
-4. Sau khi hoàn thành tính năng mới, hãy cập nhật lại file `PROJECT_STATUS.md` này.
+## 5. HUONG DAN DANH CHO AGENT TIEP THEO (AI AGENT INSTRUCTIONS)
+1. Doc ky file nay truoc khi tiep tuc phat trien hoac bao tri du an.
+2. Local database mac dinh la H2 in-memory (hoac PostgreSQL tuy cau hinh application profile), port mac dinh la 8082.
+3. Khi chinh sua ma nguon, luon kiem tra bang `mvn test` va `git diff --check` de dam bao khong phat sinh loi.
+4. Sau khi hoan thanh tinh nang moi, hay cap nhat lai file `PROJECT_STATUS.md` nay.

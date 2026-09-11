@@ -60,7 +60,14 @@ public class MarketController {
      * Lấy dòng tin tức tài chính mới nhất từ Alpha Vantage.
      */
     @GetMapping("/news")
-    public ResponseEntity<List<NewsFeedItemDto>> getNews(@RequestParam(defaultValue = "10") int limit) {
+    public ResponseEntity<?> getNews(@RequestParam(defaultValue = "10") int limit) {
+        if (!com.llmgateway.service.AiNewsService.isValidLimit(limit)) {
+            return ResponseEntity.badRequest().body(java.util.Map.of(
+                    "status", "error",
+                    "message", "Tham số limit phải nằm trong khoảng từ 1 đến " + com.llmgateway.service.AiNewsService.MAX_LIMIT,
+                    "data", java.util.List.of()
+            ));
+        }
         List<NewsFeedItemDto> news = marketDataService.getNewsFeed(limit);
         return ResponseEntity.ok(news);
     }

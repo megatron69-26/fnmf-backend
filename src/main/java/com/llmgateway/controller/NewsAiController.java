@@ -33,9 +33,16 @@ public class NewsAiController {
      * GET /api/news/feed?symbol=BTCUSDT&limit=5
      */
     @GetMapping("/feed")
-    public ResponseEntity<List<NewsFeedItemDto>> getLiveAiNewsFeed(
+    public ResponseEntity<?> getLiveAiNewsFeed(
             @RequestParam(required = false) String symbol,
             @RequestParam(defaultValue = "5") int limit) {
+        if (!AiNewsService.isValidLimit(limit)) {
+            Map<String, Object> errResp = new HashMap<>();
+            errResp.put("status", "error");
+            errResp.put("message", "Tham số limit phải nằm trong khoảng từ 1 đến " + AiNewsService.MAX_LIMIT);
+            errResp.put("data", java.util.Collections.emptyList());
+            return ResponseEntity.badRequest().body(errResp);
+        }
         List<NewsFeedItemDto> feed = aiNewsService.getLiveAiNewsFeed(symbol, limit);
         if (limit > 0 && feed.size() > limit) {
             feed = feed.subList(0, limit);
@@ -51,7 +58,32 @@ public class NewsAiController {
     public ResponseEntity<Map<String, Object>> getSyncNewsFeed(
             @RequestParam(required = false) String symbol,
             @RequestParam(defaultValue = "5") int limit) {
-        List<NewsFeedItemDto> feed = aiNewsService.getLiveAiNewsFeed(symbol, limit);
+        if (!AiNewsService.isValidLimit(limit)) {
+            Map<String, Object> errResp = new HashMap<>();
+            errResp.put("status", "error");
+            errResp.put("message", "Tham số limit phải nằm trong khoảng từ 1 đến " + AiNewsService.MAX_LIMIT);
+            errResp.put("data", java.util.Collections.emptyList());
+            return ResponseEntity.badRequest().body(errResp);
+        }
+
+        com.llmgateway.dto.news.NewsSyncResult syncResult = aiNewsService.getLiveAiNewsSyncResult(symbol, limit);
+        if (!"ok".equals(syncResult.getStatus())) {
+            Map<String, Object> statusResp = new HashMap<>();
+            statusResp.put("status", syncResult.getStatus());
+            statusResp.put("message", syncResult.getMessage());
+            statusResp.put("data", java.util.Collections.emptyList());
+            return ResponseEntity.ok(statusResp);
+        }
+
+        List<NewsFeedItemDto> feed = syncResult.getItems();
+        if (feed == null || feed.isEmpty()) {
+            Map<String, Object> emptyResp = new HashMap<>();
+            emptyResp.put("status", "empty");
+            emptyResp.put("message", "Chưa có bản tin mới");
+            emptyResp.put("data", java.util.Collections.emptyList());
+            return ResponseEntity.ok(emptyResp);
+        }
+
         List<Map<String, Object>> data = new ArrayList<>();
         int idCounter = 1;
         for (NewsFeedItemDto item : feed) {
@@ -112,6 +144,15 @@ public class NewsAiController {
         response.put("status", "ok");
         response.put("data", data);
         return ResponseEntity.ok(response);
+    }
+
+    /**
+     * GET /api/news/diagnostics
+     * Xác minh an toàn hệ thống tin tức & pipeline (Section E)
+     */
+    @GetMapping("/diagnostics")
+    public ResponseEntity<Map<String, Object>> getDiagnostics() {
+        return ResponseEntity.ok(aiNewsService.getDiagnostics());
     }
 
     /**
