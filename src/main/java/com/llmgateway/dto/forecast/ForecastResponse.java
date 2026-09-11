@@ -18,6 +18,8 @@ public class ForecastResponse {
     private List<String> keyDrivers;    // 3 gạch đầu dòng giải thích nguyên nhân
     private String technicalOutlook;    // Nhận định kỹ thuật (Nến, đường giá)
     private String fundamentalOutlook;  // Nhận định tin tức vĩ mô (FED, lạm phát, tin tức)
+    private String analysisSource;      // "GEMINI"
+    private Integer candleCount;        // Số nến thực tế đưa vào phân tích
     private boolean fromCache;          // true nếu lấy từ database cache
     private LocalDateTime createdAt;
 
@@ -25,6 +27,10 @@ public class ForecastResponse {
     }
 
     public ForecastResponse(String symbol, String assetName, BigDecimal currentPrice, String trendPrediction, String timeframe, BigDecimal supportLevel, BigDecimal resistanceLevel, String recommendation, Integer confidenceScore, List<String> keyDrivers, String technicalOutlook, String fundamentalOutlook, boolean fromCache, LocalDateTime createdAt) {
+        this(symbol, assetName, currentPrice, trendPrediction, timeframe, supportLevel, resistanceLevel, recommendation, confidenceScore, keyDrivers, technicalOutlook, fundamentalOutlook, "GEMINI", null, fromCache, createdAt);
+    }
+
+    public ForecastResponse(String symbol, String assetName, BigDecimal currentPrice, String trendPrediction, String timeframe, BigDecimal supportLevel, BigDecimal resistanceLevel, String recommendation, Integer confidenceScore, List<String> keyDrivers, String technicalOutlook, String fundamentalOutlook, String analysisSource, Integer candleCount, boolean fromCache, LocalDateTime createdAt) {
         this.symbol = symbol;
         this.assetName = assetName;
         this.currentPrice = currentPrice;
@@ -37,6 +43,8 @@ public class ForecastResponse {
         this.keyDrivers = keyDrivers;
         this.technicalOutlook = technicalOutlook;
         this.fundamentalOutlook = fundamentalOutlook;
+        this.analysisSource = analysisSource;
+        this.candleCount = candleCount;
         this.fromCache = fromCache;
         this.createdAt = createdAt != null ? createdAt : LocalDateTime.now();
     }
@@ -137,6 +145,22 @@ public class ForecastResponse {
         this.fundamentalOutlook = fundamentalOutlook;
     }
 
+    public String getAnalysisSource() {
+        return analysisSource;
+    }
+
+    public void setAnalysisSource(String analysisSource) {
+        this.analysisSource = analysisSource;
+    }
+
+    public Integer getCandleCount() {
+        return candleCount;
+    }
+
+    public void setCandleCount(Integer candleCount) {
+        this.candleCount = candleCount;
+    }
+
     public boolean isFromCache() {
         return fromCache;
     }
@@ -151,5 +175,13 @@ public class ForecastResponse {
 
     public void setCreatedAt(LocalDateTime createdAt) {
         this.createdAt = createdAt;
+    }
+
+    public LocalDateTime getGeneratedAt() {
+        return createdAt;
+    }
+
+    public void setGeneratedAt(LocalDateTime generatedAt) {
+        this.createdAt = generatedAt;
     }
 }

@@ -76,6 +76,11 @@ public class AuthService {
             throw new IllegalArgumentException("Email '" + email + "' đã tồn tại trên hệ thống!");
         }
 
+        // Kiểm tra độ dài mật khẩu tối thiểu 8 ký tự (không trim)
+        if (request.getPassword() == null || request.getPassword().length() < 8) {
+            throw new IllegalArgumentException("Mật khẩu phải có ít nhất 8 ký tự!");
+        }
+
         // 1. Băm mật khẩu bằng BCrypt (không trim để bảo toàn ký tự)
         String hashedPassword = passwordEncoder.encode(request.getPassword());
 

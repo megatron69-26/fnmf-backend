@@ -51,6 +51,12 @@ public class MarketForecast {
     @Column(name = "fundamental_outlook", length = 2000)
     private String fundamentalOutlook;
 
+    @Column(name = "analysis_source", length = 50)
+    private String analysisSource;
+
+    @Column(name = "candle_count")
+    private Integer candleCount;
+
     @Column(name = "created_at")
     private LocalDateTime createdAt = LocalDateTime.now();
 
@@ -58,6 +64,10 @@ public class MarketForecast {
     }
 
     public MarketForecast(String symbol, BigDecimal currentPrice, String trendPrediction, String timeframe, BigDecimal supportLevel, BigDecimal resistanceLevel, String recommendation, BigDecimal confidenceScore, String analysisSummary, String technicalOutlook, String fundamentalOutlook) {
+        this(symbol, currentPrice, trendPrediction, timeframe, supportLevel, resistanceLevel, recommendation, confidenceScore, analysisSummary, technicalOutlook, fundamentalOutlook, "GEMINI", null);
+    }
+
+    public MarketForecast(String symbol, BigDecimal currentPrice, String trendPrediction, String timeframe, BigDecimal supportLevel, BigDecimal resistanceLevel, String recommendation, BigDecimal confidenceScore, String analysisSummary, String technicalOutlook, String fundamentalOutlook, String analysisSource, Integer candleCount) {
         this.symbol = symbol;
         this.currentPrice = currentPrice;
         this.trendPrediction = trendPrediction;
@@ -69,6 +79,8 @@ public class MarketForecast {
         this.analysisSummary = analysisSummary;
         this.technicalOutlook = technicalOutlook;
         this.fundamentalOutlook = fundamentalOutlook;
+        this.analysisSource = analysisSource;
+        this.candleCount = candleCount;
         this.createdAt = LocalDateTime.now();
     }
 
@@ -174,5 +186,21 @@ public class MarketForecast {
 
     public void setFundamentalOutlook(String fundamentalOutlook) {
         this.fundamentalOutlook = fundamentalOutlook;
+    }
+
+    public String getAnalysisSource() {
+        return analysisSource;
+    }
+
+    public void setAnalysisSource(String analysisSource) {
+        this.analysisSource = analysisSource;
+    }
+
+    public Integer getCandleCount() {
+        return candleCount;
+    }
+
+    public void setCandleCount(Integer candleCount) {
+        this.candleCount = candleCount;
     }
 }

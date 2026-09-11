@@ -1,403 +1,286 @@
-# FNMF Codebase Walkthrough — Draft
+# FNMF Codebase Walkthrough — Tai lieu Kien truc va Ma nguon
 
-> Trạng thái: bản nháp phục vụ học code, chuẩn bị báo cáo và bảo vệ đồ án. Tài liệu mô tả code tại backend commit `c6fc16c` và Android commit `5bc7f7d`. Các ảnh bên dưới được sinh trực tiếp từ source tương ứng để người đọc có thể đối chiếu.
+Tai lieu danh cho giang vien phan bien, thanh vien nhom phat trien va ky su he thong can nam bat kien truc toan dien cua du an Financial News & Market Forecasting (FNMF) tai phien ban release v1.1.18.
 
-## 1. Mục tiêu tài liệu
+Moi luong nghiep vu trong he thong deu duoc truy vet day du theo chu trinh:
+1. Thao tac cua nguoi dung tren giao dien Android.
+2. Endpoint REST API hoac ket noi WebSocket tuong ung.
+3. Lop Controller va Service tiep nhan va dieu phoi logic nghiep vu tren Spring Boot.
+4. Nguon du lieu ben ngoai (Binance, Alpha Vantage, Google Gemini) hoac co so du lieu noi bo (PostgreSQL/H2, Room DB).
+5. Co che bien doi, ghi so kiem toan, bao ve toan ven va tra ve ket qua.
+6. Co che phan ung, suy giam tinh nang mem deo (Graceful Degradation) khi gap su co.
 
-Tài liệu này không chỉ liệt kê tính năng. Mỗi phần lần theo một luồng hoàn chỉnh:
+---
 
-1. Người dùng thực hiện thao tác gì trên Android.
-2. Android gọi endpoint nào.
-3. Controller và service nào xử lý request.
-4. Dữ liệu đến từ API ngoài hay database nào.
-5. Dữ liệu được biến đổi, lưu và trả về ra sao.
-6. Hệ thống phản ứng thế nào khi một thành phần gặp lỗi.
+## 1. Kien truc tong the he thong (System Architecture)
 
-Đối tượng đọc là thành viên nhóm cần nắm codebase, giảng viên phản biện luồng hệ thống, hoặc người học muốn dùng dự án như một case study Android–Spring Boot–Cloud.
-
-## 2. Kiến trúc tổng thể
+He thong FNMF duoc thiet ke theo kien truc Client-Server da tang, phan tach ro rang giua tang trinh dien di dong, tang may chu trung gian (Backend REST & AI Gateway), va cac he thong cung cap du lieu thi truong / mo hinh tri tue nhan tao.
 
 ```mermaid
 flowchart LR
-    U[Người dùng] --> A[Android FNMF]
-    A -->|HTTPS REST| B[Spring Boot trên Railway]
-    A -->|WebSocket giá live| BNWS[Binance WebSocket]
-    B --> PG[(PostgreSQL Railway)]
-    B -->|Tin tài chính| AV[Alpha Vantage]
-    B -->|Phân tích và dự báo| G[Google Gemini]
-    B -->|Giá và nến| BN[Binance REST]
-    A --> ROOM[(Room DB trên thiết bị)]
+    U[Nguoi dung Mobile] --> A[Android Client App v1.1.18]
+    A -->|HTTPS REST| B[Spring Boot 3 tren Railway Cloud]
+    A -->|WebSocket tick gia live| BNWS[Binance WebSocket]
+    B --> PG[(PostgreSQL tren Railway)]
+    B -->|Tin tuc tai chinh goc| AV[Alpha Vantage API]
+    B -->|Phan tich NLP va Du bao| G[Google Gemini 3.6 Flash]
+    B -->|Gia authoritative va Nen Klines| BN[Binance REST API]
+    A --> ROOM[(Room Database SQLite tren Android)]
 ```
 
-Android mặc định gọi domain Railway thay cho IP LAN. URL được quản lý tập trung trong `NetworkConfig`, sau đó được dùng để xây dựng Retrofit client.
+Nguyen tac van hanh cot loi cua he thong:
+- **Client Mobile (Android):** Xay dung theo mau kien truc MVVM, su dung Retrofit 2 va OkHttp 3 de giao tiep REST API qua HTTPS, mo ket noi WebSocket doc lap voi Binance de nhan tick gia live, va duy tri Room Database cuc bo lam bo nho dem ngoai tuyen.
+- **Backend & AI Gateway (Spring Boot 3):** Dong vai tro la nguon su that duy nhat (Single Source of Truth) cho toan bo nghiep vu xac thuc, so du vi, danh muc tai san, lich su khop lenh va ban tin phan tich AI. He thong tuyet doi khong tin cay bat ky gia giao dich nao do client tu tinh toan gui len.
+- **Lop dich vu ben ngoai:**
+  - Binance REST API (`https://api.binance.com/api/v3/klines`, ticker) phuc vu chuoi nen that lich su va gia authoritative.
+  - Binance WebSocket (`wss://stream.binance.com:9443/ws/...`) phuc vu cap nhat bieu do nhat ky tren client.
+  - Alpha Vantage API (`https://www.alphavantage.co/query`, ham `NEWS_SENTIMENT`) phuc vu tin tuc tai chinh thuc te.
+  - Google Gemini AI (`OPENAI_DEFAULT_MODEL=gemini-3.6-flash`) ket noi qua giao thuc tuong thich OpenAI de xu ly ngon ngu tu nhien, tom tat su kien va du bao thi truong.
 
-![Android dùng Railway làm backend mặc định](assets/01-railway-base-url.png)
+---
 
-### 2.1. Cloud khác gì với chạy từ IntelliJ và hotspot?
+## 2. Moi truong trien khai: Railway Cloud vs Localhost IntelliJ/Hotspot (Deployment Topology)
 
-Khi chạy từ IntelliJ, Spring Boot vẫn là backend thật nhưng tiến trình Java nằm trên laptop. Điện thoại phải truy cập IP LAN của laptop, thường phải cùng Wi-Fi hoặc hotspot. Laptop tắt, JVM dừng hoặc IP thay đổi thì điện thoại không thể gọi backend. `localhost` trên điện thoại là chính điện thoại, không phải laptop.
+He thong tach biet hoan toan giua moi truong phat trien cuc bo va moi truong van hanh production tren nen tang dam may:
 
-Trên Railway, Spring Boot được build thành container và chạy trên máy chủ từ xa. Railway cấp domain HTTPS công khai, truyền `PORT` cho ứng dụng và kết nối tới PostgreSQL bằng biến môi trường. Do đó thiết bị không cần cùng mạng với laptop.
+| Dac tinh | Moi truong Local Development | Moi truong Production (Railway Cloud) |
+| :--- | :--- | :--- |
+| **May chu chay** | Tien trinh JVM khoi chay boi IntelliJ IDEA hoac Maven Wrapper tren laptop | Container Docker chay doc lap tren may chu Railway |
+| **Co so du lieu** | H2 Database in-memory che do tuong thich PostgreSQL (`MODE=PostgreSQL`) | PostgreSQL managed database tren Railway |
+| **Quan ly Schema** | Flyway Migrations (V1 den V8) tu dong chay khi khoi dong | Flyway Migrations (V1 den V8) quan ly phien ban schema chat che |
+| **Dia chi truy cap** | `http://localhost:8083` (Chi truy cap duoc tu laptop hoac LAN hotspot) | `https://fnmf-backend-production.up.railway.app/` (Internet toan cau qua HTTPS) |
+| **Bao mat endpoint** | Mo Swagger UI, OpenAPI spec, H2 Console phuc vu lap trinh vien | `ProductionSecurityFilter` chan hoan toan Swagger, H2 va diagnostics (tra ve HTTP 404) |
+| **Quan ly Bi mat** | `application.properties` | Bien moi truong Railway (Environment Variables), 0 secrets commit vao git |
 
-| Môi trường | Backend | Database | Phạm vi truy cập |
-|---|---|---|---|
-| Local | JVM do IntelliJ/JAR khởi chạy | H2 file | Laptop và thiết bị cùng LAN |
-| Production | Container Railway | PostgreSQL Railway | Internet qua HTTPS |
+Uu diem cua kien truc Cloud Production:
+- Thiet bi Android co the cai dat file APK release candidate va su dung ung dung o bat ky dau qua 4G/Wi-Fi ma khong phu thuoc vao laptop hay mang LAN noi bo.
+- Du lieu vi, tai san nam giu va lich su giao dich ton tai ben vung trong PostgreSQL, khong bi mat khi tat IDE hoac dung may tinh ca nhan.
 
-Production đọc cấu hình từ `application-prod.properties`; API key và mật khẩu database không nằm trong APK hoặc source public.
+---
 
-![Cấu hình production lấy port, database và secret từ environment](assets/02-production-config.png)
+## 3. Xac thuc, Phan quyen & Bao mat: Auth, JWT & AndroidKeyStore AES-GCM
 
-## 3. Flow News
+### 3.1. Nghiep vu Xac thuc phia Backend
+1. **Dang ky tai khoan Email-only (`POST /api/auth/register`):**
+   - He thong yeu cau `email`, `password`, va `fullName`.
+   - Email duoc chuan hoa ve chu thuong (`LOWER(email)`).
+   - Mat khau duoc ma hoa mot chieu bang `BCryptPasswordEncoder` voi do manh salt 10 vong.
+   - Khi tao thanh cong nguoi dung moi, he thong tu dong tao mot vi von khoi tao $10,000.00 USD trong bang `WALLETS`.
+2. **Dang nhap & Phat hanh JWT (`POST /api/auth/login`):**
+   - Kiem tra mat khau qua `BCrypt.checkpw()`.
+   - Phat hanh chuoi JSON Web Token (JWT) su dung thu vien JJWT, ma hoa bang thuat toan HMAC-SHA256 voi thoi han hieu luc 24 gio.
+   - Payload chua thong tin `sub` (email), `userId`, va danh sach vai tro (`role`: `USER` hoac `ADMIN`).
+3. **Kiem tra phien (`GET /api/auth/me`):**
+   - Yeu cau header `Authorization: Bearer <token>`.
+   - `JwtAuthenticationFilter` giai ma token, thiet lap `SecurityContextHolder`, va tra ve thong tin nguoi dung kem so du vi hien tai.
 
-### 3.1. Android yêu cầu danh sách News
+### 3.2. Bao mat luu tru Token tren Android voi AndroidKeyStore AES-GCM
+- Android client v1.1.18 quan ly phien dang nhap tap trung thong qua `AuthSessionManager`.
+- Thay vi luu plain-text JWT token vao `SharedPreferences`, ung dung su dung khoa ma hoa quan ly boi he thong **AndroidKeyStore** voi thuat toan `AES/GCM/NoPadding` (khoa 256-bit).
+- Chuoi token duoc ma hoa truoc khi ghi vao file cau hinh cuc bo va duoc giai ma trong bo nho RAM khi can gan vao header HTTP cua Retrofit.
+- `AuthSessionManager` quan ly trang thai dieu huong tap trung: neu server tra ve HTTP 401 Unauthorized do token het han, client tu dong xoa phien va dieu huong an toan ve man hinh dang nhap `Activity1` ma khong gay vong lap dieu huong (navigation loop).
 
-Khi `NewsFeedFragment` xuất hiện, coroutine gọi `NewsApiService.syncNews()`. Retrofit gửi `GET /api/news/sync` tới base URL Railway. Khi thành công, trường `data` trong response được đưa vào adapter; khi thất bại, UI hiển thị trạng thái lỗi thay vì tự đọc mock asset.
+---
 
-![Android gọi endpoint đồng bộ News](assets/03-android-news-request.png)
+## 4. Luong du lieu thi truong & Khop lenh Paper Trading (Pessimistic Locking & ACID)
 
-Flow rút gọn:
+### 4.1. Du lieu Thi truong Authoritative va Loai bo Du lieu Gia (Zero-Fake Policy)
+- **Nguon nen lich su:** Backend goi Binance REST API (`/api/v3/klines`) lay 30 cay nen ngay that cho cac ma duoc ho tro.
+- **Tick gia truc tiep:** Android mo ket noi Binance WebSocket nhan thong diep kline de cap nhat bieu do `MPAndroidChart` theo thoi gian thuc.
+- **Danh muc ma hop le:** `BTCUSDT`, `ETHUSDT`, `XAUUSD` (tham chieu `PAXGUSDT`).
+- **Chinh sach Symbol & Tu choi USOIL:** Ma `USOIL` va cac ma khong duoc ho tro bi tu choi tuyet doi voi HTTP 422 `UNSUPPORTED_SYMBOL`. He thong khong bao gio fallback ngam ve BTC.
+- **Chinh sach Khong du lieu gia:** Backend da loai bo hoan toan cac ham sinh nen toan hoc mo phong, `Math.random()` va gia hardcode. Neu mat ket noi nha cung cap va chua co cache that, he thong tra ve HTTP 503 `DATA_UNAVAILABLE`. Neu da co cache that cua chinh ma do, he thong tra ve du lieu kem co `stale=true`.
 
-```text
-NewsFeedFragment
-  -> ApiClient / NewsApiService
-  -> GET /api/news/sync
-  -> NewsAiController
-  -> AiNewsService.getLiveAiNewsFeed(...)
-```
-
-### 3.2. Backend lấy tin từ Alpha Vantage
-
-`AiNewsService` dựng URL Alpha Vantage với `function=NEWS_SENTIMENT`, bộ lọc ticker/topic, `limit` và API key. Đây là REST request thông thường; Alpha Vantage không nhận prompt AI.
-
-![Backend tạo request NEWS_SENTIMENT tới Alpha Vantage](assets/04-alpha-vantage-request.png)
-
-Response Alpha Vantage chứa các trường như `title`, `url`, `time_published`, `summary`, `source` và sentiment gốc. Backend ánh xạ chúng thành DTO nội bộ trước khi phân tích tiếp.
-
-### 3.3. Kiểm tra cache trước khi gọi Gemini
-
-Mỗi bài được nhận diện chủ yếu bằng URL. Nếu bài đã có trong bảng `NEWS_AI_CACHE`, backend dùng kết quả cũ. Nếu chưa có, backend tạo `NewsAnalysisRequest`, gọi Gemini và lưu kết quả mới vào PostgreSQL.
-
-Mục đích của cache:
-
-- Không trả tiền phân tích lại cùng một bài.
-- Giảm số request và thời gian phản hồi.
-- Có dữ liệu dự phòng khi Alpha Vantage chạm rate limit.
-- Giữ cùng một kết quả phân tích giữa nhiều thiết bị.
-
-### 3.4. Gemini nhận prompt nào?
-
-System prompt News được hardcode trong `AiNewsService`. Prompt quy định vai trò chuyên gia, yêu cầu ba gạch đầu dòng, nhãn `BULLISH/BEARISH/NEUTRAL`, confidence, reason và bắt buộc trả JSON.
-
-![System prompt phân tích News](assets/05-news-system-prompt.png)
-
-User prompt chứa tiêu đề và nội dung tóm tắt lấy từ Alpha Vantage. Backend gửi system/user message tới endpoint Gemini tương thích OpenAI, với model lấy từ cấu hình và `temperature = 0.2`.
-
-![Payload và HTTP request gửi Gemini](assets/06-news-gemini-request.png)
+### 4.2. Khop lenh Paper Trading voi Khoa bi quan (Pessimistic Locking)
+Khi nguoi dung dat lenh Mua hoac Ban (`POST /api/trade/order`):
+1. Client chi gui `symbol`, `side` (`BUY` hoac `SELL`), `quantity`, va `clientOrderId` (UUID). Client tuyet doi khong duoc phep truyen gia khop.
+2. `TradeController` yeu cau `MarketDataService` lay gia thi truong thoi gian thuc authoritative truc tiep tu Binance.
+3. `TradeService.executeOrder()` duoc thuc thi ben trong transaction co tinh toan ven ACID (`@Transactional`):
+   - Ap dung khoa bi quan `@Lock(LockModeType.PESSIMISTIC_WRITE)` len ban ghi `Wallet` cua nguoi dung de tranh race condition khi co nhieu lenh gui cung luc.
+   - Ap dung khoa bi quan `@Lock(LockModeType.PESSIMISTIC_WRITE)` len ban ghi `Holding` tuong ung voi ma tai san.
+   - Kiem tra so du kha dung: Lenh BUY kiem tra so du tien mat du chi tra; lenh SELL kiem tra so luong tai san dang nam giu du de ban.
+   - Cong thuc tinh gia von binh quan (DCA) khi Mua:
+     $$\text{AvgBuyPrice}_{\text{new}} = \frac{(\text{AvgBuyPrice}_{\text{old}} \times \text{Quantity}_{\text{old}}) + (\text{Price}_{\text{exec}} \times \text{Quantity}_{\text{new}})}{\text{Quantity}_{\text{old}} + \text{Quantity}_{\text{new}}}$$
+   - Tinh Loi/Lo (PnL) thoi gian thuc:
+     $$\text{PnL} = (\text{CurrentPrice} - \text{AvgBuyPrice}) \times \text{Quantity}$$
+   - Ghi nhan ban ghi vao bang `TRANSACTIONS` kem `clientOrderId`.
+   - Ghi nhan bien dong so du vao so cai kiem toan `WALLET_LEDGER`.
+4. **Bao dam tinh luy thua (Idempotency):** Neu backend nhan lai cung mot `clientOrderId`, he thong phat hien ban ghi da ton tai trong `TRANSACTIONS` va replay ngay ket qua khop lenh cu ma khong tru tien hay cap nhat so du lan thu hai.
 
 ```mermaid
 sequenceDiagram
-    actor User
-    participant App as Android
-    participant API as Spring Boot
-    participant Alpha as Alpha Vantage
-    participant DB as PostgreSQL
-    participant Gemini
-
-    User->>App: Mở tab News
-    App->>API: GET /api/news/sync
-    API->>Alpha: GET NEWS_SENTIMENT
-    Alpha-->>API: Danh sách bài báo
-    loop Mỗi bài báo
-        API->>DB: Tìm cache theo article URL
-        alt Đã phân tích
-            DB-->>API: Kết quả cache
-        else Bài mới
-            API->>Gemini: System prompt + title + summary
-            Gemini-->>API: JSON analysis
-            API->>DB: Lưu analysis
-        end
-    end
-    API-->>App: News JSON
-    App-->>User: Render RecyclerView
-```
-
-### 3.5. Các nhánh lỗi của News
-
-- Alpha Vantage lỗi hoặc hết quota: đọc cache PostgreSQL.
-- Gemini chưa có key hoặc request lỗi: chạy heuristic dựa trên từ khóa.
-- Không có live news lẫn cache: trả danh sách rỗng để Android hiển thị empty state.
-- JSON Gemini sai định dạng: parser bắt lỗi và chuyển sang heuristic.
-
-Điểm cần cải tiến: response hiện nên bổ sung `analysisSource = GEMINI | HEURISTIC | CACHE` để UI không trình bày kết quả heuristic như thể chắc chắn do Gemini tạo.
-
-## 4. Flow Market Data và biểu đồ nến
-
-### 4.1. Nến lịch sử
-
-Android gọi `GET /api/market/candles?symbol=...&interval=daily`. Backend hiện lấy 30 nến ngày từ Binance REST endpoint `/api/v3/klines`. Dữ liệu OHLCV được ánh xạ thành `CandleDto` rồi vẽ bằng MPAndroidChart.
-
-![Backend lấy nến ngày từ Binance REST](assets/07-binance-candles.png)
-
-### 4.2. Tick giá live
-
-Màn hình Trading mở WebSocket trực tiếp tới Binance. Mỗi message kline 1 giây cập nhật giá/header và cây nến đang hoạt động. BTC và ETH dùng cặp USDT; XAU dùng PAXG như tài sản tham chiếu. Mã không được hỗ trợ không được phép fallback sang stream BTC ở Android v1.1.13.
-
-Lý do dùng WebSocket: server có thể đẩy tick liên tục trên một kết nối, thay vì app gửi REST request lặp lại mỗi giây.
-
-### 4.3. Nguồn sự thật và cache
-
-- Giá hiển thị live: Binance WebSocket trên Android.
-- Nến lịch sử: Binance REST qua backend.
-- Giá dùng để khớp lệnh: backend tự lấy, không tin giá do client gửi.
-- Room DB: cache cục bộ, không phải nguồn sự thật của ví hay giao dịch.
-
-## 5. Flow đặt lệnh Paper Trading
-
-Android chỉ gửi `symbol`, `side` và `quantity`, kèm JWT. `TradeController` lấy user ID từ token và yêu cầu `MarketDataService` lấy giá hiện tại. `TradeService.executeOrder()` chạy trong transaction: kiểm tra tiền/holding, cập nhật ví, cập nhật holding và ghi lịch sử giao dịch.
-
-![Controller lấy giá backend trước khi thực thi lệnh](assets/08-trade-controller.png)
-
-![Transaction cập nhật ví và holding](assets/09-trade-transaction.png)
-
-```mermaid
-sequenceDiagram
-    actor User
-    participant App as Order Ticket
+    actor User as Nguoi dung Mobile
+    participant App as Android Client
     participant API as TradeController
     participant Market as MarketDataService
     participant Service as TradeService
     participant DB as PostgreSQL
 
-    User->>App: Xác nhận MUA/BÁN
-    App->>API: POST /api/trade/order + Bearer JWT
+    User->>App: Xac nhan Mua / Ban
+    App->>API: POST /api/trade/order (Bearer JWT + clientOrderId)
     API->>Market: getPriceBySymbol(symbol)
-    Market-->>API: Giá authoritative
+    Market-->>API: Gia thi truong authoritative
     API->>Service: executeOrder(userId, request, price)
-    Service->>DB: Kiểm tra và cập nhật trong transaction
-    DB-->>Service: Commit
-    Service-->>App: OrderResponse + executedPrice
-    App-->>User: Hiển thị kết quả, tải lại portfolio
+    Note over Service,DB: Bat dau @Transactional<br/>PESSIMISTIC_WRITE Wallet & Holding<br/>Kiem tra clientOrderId idempotency
+    Service->>DB: Cap nhat Wallet (tru/cong balance)
+    Service->>DB: Cap nhat Holding (tinh DCA / tru so luong)
+    Service->>DB: Chen ban ghi TRANSACTIONS
+    Service->>DB: Ghi so cai WALLET_LEDGER
+    DB-->>Service: Commit transaction
+    Service-->>App: OrderResponse (gia khop, so du moi, PnL)
+    App-->>User: Cap nhat giao dien va danh muc
 ```
-
-Backend là nơi quyết định giá khớp và kiểm tra số dư. Điều này ngăn client giả mạo giá giao dịch.
-
-## 6. Flow xác thực và quản trị
-
-### 6.1. Người dùng Android
-
-1. Người dùng nhập email và password.
-2. Android gọi `/api/auth/login`.
-3. Backend kiểm tra password hash BCrypt.
-4. Backend phát JWT chứa danh tính/quyền.
-5. Android gửi JWT trong `Authorization: Bearer ...` cho portfolio, history và order.
-
-### 6.2. Cloud Admin
-
-`admin.html` là static resource do cùng Spring Boot phục vụ. Admin đăng nhập để nhận JWT có role `ADMIN`, sau đó gọi `/api/admin/db/overview` và `/api/admin/set-balance`. Thao tác thay đổi PostgreSQL cloud, không thay đổi file H2 trên laptop.
-
-Production cố ý tắt H2 Console, Swagger và raw SQL admin endpoint để giảm bề mặt tấn công.
-
-## 7. Flow Forecast AI
-
-Thiết kế dự kiến của backend:
-
-```text
-symbol + timeframe
-  -> giá hiện tại
-  -> nến gần nhất
-  -> news cache gần nhất
-  -> ghép thành user prompt
-  -> Gemini
-  -> trend/support/resistance/recommendation/confidence
-  -> lưu MARKET_FORECASTS
-```
-
-System prompt forecast được hardcode trong `ForecastService`. Nó yêu cầu Gemini kết hợp dữ liệu kỹ thuật và tâm lý tin tức, sau đó chỉ trả JSON.
-
-![Prompt Forecast kết hợp nến và News](assets/10-forecast-prompt.png)
-
-## 8. Database và migration
-
-Local dùng H2 để chạy nhanh, ít cấu hình. Production dùng PostgreSQL để nhiều client truy cập đồng thời và để dữ liệu tồn tại độc lập với container.
-
-Flyway chạy migration có version trước khi Hibernate tạo `EntityManagerFactory`. Ví dụ migration role thực hiện theo thứ tự: thêm cột nullable, backfill user cũ, đặt default rồi mới thêm ràng buộc `NOT NULL`.
-
-Các nhóm dữ liệu chính:
-
-- `USERS`: tài khoản và role.
-- `WALLETS`: tiền mặt, vốn ban đầu.
-- `HOLDINGS`: tài sản đang nắm giữ.
-- `TRANSACTIONS`: lệnh đã thực thi.
-- `NEWS_AI_CACHE`: bài báo và kết quả phân tích.
-- `MARKET_FORECASTS`: lịch sử dự báo.
-
-## 9. Đánh giá Known Issues & Bằng chứng Kiểm thử (Correctness Phase)
-
-Toàn bộ các lỗi nghiêm trọng về tính đúng đắn dữ liệu và hợp đồng API đã được xử lý triệt để trong Correctness & Data-Integrity Phase:
-
-### 9.1. [ĐÃ XỬ LÝ] Hợp đồng API Forecast (Contract Alignment)
-- **Trước đây:** Android khai báo sai `GET /api/forecast/predict?symbol=...`, gây lỗi 404 khi truy vấn từ App.
-- **Giải pháp:** Cập nhật `ApiService.kt` thành `@GET("/api/forecast/{symbol}")` với `@Path("symbol")` và `@Query("timeframe") = "24H_7D"`. `ForecastFragment` bổ sung quản lý vòng đời (hủy call khi `onDestroyView`), hiển thị lỗi trung thực, không bao giờ sinh `ForecastResponse` giả mạo.
-- **Bằng chứng kiểm thử:** Test `testForecastApiContract_hasPathAnnotationAndQueryTimeframe` trong `CorrectnessAndIntegrityUnitTest.kt` đạt 100% PASS.
-
-### 9.2. [ĐÃ XỬ LÝ] Xóa bỏ hoàn toàn dữ liệu tài chính giả (Zero-Fake Policy)
-- **Trước đây:** Backend `MarketDataService` còn hàm `generateFallbackCandles()`, `Math.random()`, sin wave mô phỏng và giá hardcode khi mất kết nối API ngoài.
-- **Giải pháp:** Xóa hoàn toàn các thuật toán sinh dữ liệu ngẫu nhiên/mô phỏng. Chuyển sang chính sách Authoritative: nếu có cache thật của đúng mã đó thì trả cache thật kèm `stale=true`; nếu chưa từng có cache thật, trả HTTP 503 `DATA_UNAVAILABLE`.
-- **Bằng chứng kiểm thử:** Bộ 57 test backend (`MarketSymbolAndTradeIntegrityTest`) và 71 test Android đạt 100% PASS.
-
-### 9.3. [ĐÃ XỬ LÝ] Chuẩn hóa ánh xạ Symbol & Loại bỏ USOIL
-- **Trước đây:** Các mã lạ hoặc `USOIL` bị fallback mặc định về `BTCUSDT`, khiến nến và giá dầu hiển thị thông số của Bitcoin.
-- **Giải pháp:** Thiết lập `MarketSymbolConfig` với 3 mã chuẩn: `BTCUSDT`, `ETHUSDT`, `XAUUSD` (tham chiếu `PAXGUSDT`). Mã `USOIL` và các mã không hỗ trợ bị từ chối hoàn toàn với HTTP 422 `UNSUPPORTED_SYMBOL` (`{"status":"ERROR","code":"UNSUPPORTED_SYMBOL","message":"Mã tài sản chưa được hỗ trợ"}`). Không bao giờ fallback về BTC.
-- **Bằng chứng kiểm thử:** Test `testUnsupportedSymbol_Returns422` và `testSymbolMapping_doesNotFallbackToBTC` xác nhận từ chối USOIL 100%.
-
-### 9.4. [ĐÃ XỬ LÝ] Hợp nhất luồng News & Bộ nhớ đệm Room Offline
-- **Trước đây:** Tồn tại song song `/api/news/sync` và `/api/mobile/news/sync`, thiếu pipeline Room hoàn chỉnh.
-- **Giải pháp:** Triển khai Single Source of Truth qua `NewsRepository`:
-  - Online: Gọi `/api/news/sync`, upsert đồng thời `NewsEntity` và `AiAnalysisEntity` vào Room DB trong một giao dịch.
-  - Offline: Tự động nạp từ Room DB, bảo lưu `publishedAt` thật từ tin bài gốc (không ghi đè bằng ngày hiện tại).
-- **Bằng chứng kiểm thử:** Test `testNewsRepository_parseTimeToEpoch_preservesRealTimestamp` đạt 100% PASS.
-
-### 9.5. [ĐÃ XỬ LÝ] Quản lý Token & AuthSessionManager tập trung
-- **Trước đây:** Truy cập rải rác khóa `jwt_token` trong `SharedPreferences` tại từng Activity/Fragment.
-- **Giải pháp:** Tập trung hóa toàn bộ logic phiên đăng nhập vào `AuthSessionManager`:
-  - Quản lý token, Bearer header, email người dùng đã chuẩn hóa lowercase.
-  - Xử lý HTTP 401/403 tập trung với cờ chống vòng lặp điều hướng (navigation loop prevention).
-  - Bảo lưu server URL và email đã lưu khi đăng xuất.
-
-### 9.6. [ĐÃ XỬ LÝ] Concurrency & Idempotency trong giao dịch (Paper Trading)
-- **Trước đây:** Lệnh đặt chỉ bọc `@Transactional`, có nguy cơ Race Condition khi gửi đồng thời 2 request.
-- **Giải pháp:**
-  - Khóa bi quan (`@Lock(LockModeType.PESSIMISTIC_WRITE)`) trên `Wallet` và `Holding`.
-  - Hỗ trợ `clientOrderId` (UUID): Tự động phát hiện và replay kết quả lệnh cũ nếu nhận trùng mã yêu cầu, bảo đảm tài khoản không bị trừ tiền hai lần.
-  - Ràng buộc duy nhất `(WALLET_ID, SYMBOL)` qua Flyway migration `V3`.
-- **Bằng chứng kiểm thử:** Test `testConcurrentOrdersDoNotOverdrawBalance` và `testIdempotency_DuplicateClientOrderId_ReturnsSameTransaction` đạt 100% PASS.
-
-### 9.7. Các giới hạn còn tồn tại (Known Issues chưa giải quyết)
-- **Nguồn dữ liệu WTI Crude Oil:** Hiện các API dữ liệu hàng hóa phái sinh thời gian thực (WTI Spot) đòi hỏi chi phí bản quyền lớn. Dự án tạm hoãn hỗ trợ mã dầu thô cho tới khi có nguồn cấp dữ liệu đáng tin cậy.
-- **Đa ví ngoại tệ:** Hệ thống hiện định giá và khớp lệnh theo đồng tiền cơ sở USD/USDT, chưa hỗ trợ chuyển đổi đa ví fiat (VND, EUR).
 
 ---
 
-## 10. Bảng đối chiếu: Đề xuất ban đầu ↔ Sản phẩm thực tế
+## 5. Luong Du bao Thi truong AI (Market Forecast via Gemini 3.6 Flash & Quota Protection)
 
-| Thành phần / Tính năng | Đề xuất ban đầu (Proposal) | Triển khai thực tế (Production) | Trạng thái | Ghi chú kỹ thuật |
-| :--- | :--- | :--- | :--- | :--- |
-| **Định danh người dùng** | Username + Mật khẩu | Email-only + Mật khẩu | **Replaced by another technology** | Chuẩn hóa toàn hệ thống sang Email-only; ràng buộc duy nhất `LOWER(email)` trên PostgreSQL. |
-| **Cơ sở dữ liệu** | Oracle Database 21c | H2 (Dev) / PostgreSQL (Cloud Production) | **Replaced by another technology** | Môi trường Railway tối ưu cho PostgreSQL; quản lý qua Flyway Migration phiên bản V1, V2, V3. |
-| **Nguồn nến & Giá Live** | Alpha Vantage API | Binance REST API & WebSocket | **Replaced by another technology** | Tránh giới hạn 5 req/phút của Alpha Vantage; nến Klines và WebSocket trực tiếp đạt độ trễ < 100ms. |
-| **Dữ liệu Dầu thô (USOIL)** | Hỗ trợ giao dịch dầu WTI | Tạm loại bỏ (HTTP 422) | **Not implemented (Deferred)** | Không dùng giá giả mô phỏng; từ chối giao dịch an toàn cho tới khi có nguồn cấp dữ liệu WTI thật. |
-| **Chế độ mất kết nối thị trường** | Sinh nến Sin Wave + Random Walk | Trả HTTP 503 hoặc Cache thật (`stale=true`) | **Replaced by another technology** | Tuân thủ chính sách Zero-Fake: Tuyệt đối không sinh dữ liệu tài chính giả mạo. |
-| **Phân tích Tin tức AI** | Alpha Vantage + Gemini AI | Alpha Vantage + Gemini + Cache CSDL + Room DB | **Implemented** | Tối ưu chi phí và độ trễ phản hồi khi có cache. Hỗ trợ đọc offline qua Room DB. |
-| **Dự báo Thị trường AI** | Google Gemini AI | Gemini AI + Định lượng Heuristic Fallback | **Implemented** | Cung cấp tín hiệu, vùng hỗ trợ/kháng cự và điểm tin cậy; dự phòng Heuristic khi Gemini gián đoạn. |
-| **Paper Trading** | Đặt lệnh Mua/Bán ảo | Đặt lệnh với Pessimistic Lock & Idempotency | **Implemented** | Khóa bi quan chống Race Condition và `clientOrderId` (UUID) bảo đảm không trùng lặp lệnh. |
-| **Danh mục theo dõi (Watchlist)** | Danh sách yêu thích | Cloud CRUD + Phân lập Room DB theo User | **Implemented** | Đầy đủ GET, POST, DELETE `/api/watchlist`; dữ liệu cache Room phân tách theo `userEmail`. |
-| **Quản trị hệ thống (Admin)** | Form nạp tiền/cấp coin | Cloud Admin tối giản đặt số dư theo Email | **Implemented** | Bảo mật phân quyền `ADMIN`, loại bỏ các form legacy, quản lý người dùng bằng email chuẩn hóa. |
-| **Cổng Nạp/Rút Tiền (Banking Sandbox)** | Chưa có / Form tĩnh | Gateway Provider-Neutral + Hosted Checkout + Sổ cái Ledger + Idempotency | **Implemented** | Minh họa chuẩn kiến trúc Payment/Banking trong đồ án; tiền mô phỏng 100%, bảo vệ ví qua Pessimistic Lock và Append-Only Ledger. |
+### 5.1. Kien truc Pipeline Du bao AI
+Endpoint: `GET /api/forecast/{symbol}?timeframe=24H_7D` va `POST /api/forecast/analyze`.
 
----
-
-## 11. Câu hỏi tự kiểm tra khi học codebase
-
-1. Vì sao điện thoại không thể dùng `localhost` để gọi backend trên laptop?
-2. Retrofit biến interface Kotlin thành HTTP request như thế nào?
-3. Controller, service, repository và DTO khác vai trò nhau ra sao?
-4. Vì sao API key Gemini không được đặt trong APK?
-5. Cache News tiết kiệm quota như thế nào và cache invalidation ở đâu?
-6. Tại sao đặt lệnh phải dùng giá do backend lấy?
-7. `@Transactional` bảo vệ những cập nhật nào nếu một bước thất bại?
-8. REST phù hợp với phần nào và WebSocket phù hợp với phần nào?
-9. H2 và PostgreSQL khác nhau thế nào về concurrency và persistence?
-10. Unit test, integration test và kiểm thử thiết bị thật chứng minh các lớp chất lượng khác nhau ra sao?
-11. Nếu Alpha Vantage, Gemini, Binance hoặc Railway lần lượt gặp lỗi thì UI biểu hiện thế nào?
-12. Làm sao chứng minh một kết quả thực sự do Gemini tạo chứ không phải heuristic/cache?
-
-## 12. Việc cần bổ sung cho bản final
-
-- Sửa và kiểm thử các known issues ở mục 9.
-- Chụp thêm ảnh runtime trên thiết bị thật cho từng flow.
-- Thêm ERD cập nhật từ schema production.
-- Thêm bảng API contract gồm request, response và HTTP status.
-- Thêm log mẫu đã che token/API key.
-- Gắn release/tag chính thức sau khi v1.1.13 được merge vào Android `main`.
-- Xuất bản PDF/Overleaf nếu giảng viên yêu cầu mẫu báo cáo học thuật.
+1. **Thu thap nguon du lieu da chieu:**
+   - 30 cay nen ky thuat OHLCV gan nhat tu Binance REST.
+   - Tin tuc vi mo va tam ly thi truong moi nhat trong bo nho dem `NEWS_AI_CACHE`.
+2. **Xay dung Prompt chuyen gia phan tich:**
+   - Prompt duoc dong goi trong `ForecastService`, yeu cau mo hinh Google Gemini (`gemini-3.6-flash`) dong vai chuyen gia tai chinh cao cap.
+   - Mo hinh phai danh gia: Xu huong (`trendPrediction`: `BULLISH_UPTREND`, `BEARISH_DOWNTREND`, `SIDEWAYS`), Vung Ho tro ky thuat (`supportLevel`), Vung Khang cu ky thuat (`resistanceLevel`), Khuyen nghi hanh dong (`recommendation`: `STRONG_BUY`, `BUY`, `HOLD`, `SELL`), va Diem tin cay (`confidenceScore` tu 0 den 100).
+   - Yeu cau dinh dang dau ra la JSON thuan tuy, khong bao boc markdown backticks.
+3. **Quan ly Cache 15 phut trong PostgreSQL:**
+   - Ket qua du bao duoc luu vao bang `MARKET_FORECASTS` voi TTL 15 phut.
+   - Cac request tiep theo trong vong 15 phut se duoc phuc vu truc tiep tu CSDL (`fromCache: true`), tiet kiem quota goi AI va giam do tre phan hoi xuong < 20ms.
+4. **Phan loai nguon du bao minh bach (Flyway V8):**
+   - Ban ghi luu ro cot `source`: `AI_GEMINI` khi duoc sinh boi Gemini 3.6 Flash, hoac `HEURISTIC_FALLBACK` khi he thong tam thoi chuyen sang mo hinh tinh toan ky thuat du phong luc Gemini gap su co mang.
 
 ---
 
-## 13. Module Nạp/Rút Tiền Sandbox (Simulated Banking Architecture)
+## 6. Luong Tin tuc Tai chinh & Pipeline AI Sentiment (Alpha Vantage -> Gemini -> PostgreSQL/Room DB)
 
-### 13.1. Mục tiêu & Định vị học thuật
-Module **Nạp/Rút Tiền Sandbox** được thiết kế nhằm phục vụ mục tiêu học phần và minh họa kiến trúc Payment Gateway / Core Banking tiêu chuẩn trong đồ án CNTT:
-1. **Tuân thủ chính sách Zero-Risk:** Toàn bộ nguồn tiền là **tiền USD mô phỏng (Sandbox)**. Tuyệt đối không tích hợp cổng thẻ thật, không lưu trữ và không yêu cầu thông tin nhạy cảm (Số thẻ tín dụng, CVV, OTP SMS, Mật khẩu ngân hàng).
-2. **Provider-Neutral Architecture:** Tách biệt rõ ràng tầng nghiệp vụ (`PaymentService`), tầng định tuyến cổng thanh toán (`PaymentProviderRegistry`, `PaymentProvider`), và nhà cung cấp mô phỏng nội bộ (`InternalSandboxPaymentProvider`). Sẵn sàng mở rộng tích hợp Stripe/Paypal/VNPay thật trong tương lai mà không phải sửa logic cốt lõi.
-3. **Append-Only Balance Ledger (Sổ cái biến động số dư đơn):** Mọi biến động số dư do Nạp (`DEPOSIT`), Rút (`WITHDRAWAL`), Điều chỉnh (`ADMIN_ADJUSTMENT`), cũng như Khớp lệnh giao dịch chứng khoán/crypto (`TRADE_BUY`, `TRADE_SELL`) đều bắt buộc ghi vào bảng sổ cái kiểm toán bất biến `wallet_ledger` (lưu trữ `amount_usd`, `balance_before`, `balance_after`, `description`, `entry_type`, `reference_id`). Hệ thống không tuyên bố sai là kế toán kép (double-entry).
-4. **Idempotency & Concurrency Race Protection:** Bảo vệ ví trước tình huống người dùng bấm liên tục nhiều lần (double-click) hoặc mạng bị chập chờn timeout thông qua `client_request_id` (UUID), khóa bi quan `@Lock(PESSIMISTIC_WRITE)`, bảng lưu vết sự kiện `payment_events`, và cơ chế bắt `DataIntegrityViolationException` để replay an toàn khi có race condition đồng thời tạo đơn.
+### 6.1. Pipeline xu ly tin tuc tu dong
+Endpoint: `GET /api/news/sync?limit=5` va `GET /api/news/feed?limit=5`.
 
-### 13.2. Sơ đồ tuần tự giao dịch Sandbox (Sequence Diagram)
-```mermaid
-sequenceDiagram
-    autonumber
-    actor User as Người dùng (Mobile)
-    participant App as Android Client
-    participant API as Backend REST API
-    participant DB as Database (PostgreSQL/H2)
-    participant Web as Hosted Checkout (Webview/CCT)
+Luong du lieu:
+$$\text{Alpha Vantage (NEWS\_SENTIMENT)} \longrightarrow \text{Google Gemini 3.6 Flash} \longrightarrow \text{PostgreSQL NEWS\_AI\_CACHE} \longrightarrow \text{Android Room DB}$$
 
-    User->>App: Mở Ví & chọn Nạp/Rút tiền
-    App->>API: POST /api/payments/deposits (hoặc withdrawals)<br/>Header: Bearer Token | Body: {amountUsd, clientRequestId}
-    API->>DB: Kiểm tra Idempotency & Tạo PaymentOrder (PENDING, checkoutToken, expiresAt = +15m)
-    API-->>App: Trả về PaymentOrderDto (kèm checkoutUrl)
-    App->>Web: Khởi chạy Chrome Custom Tabs mở checkoutUrl
-    User->>Web: Chọn "Xác nhận Nạp/Rút thành công" (hoặc Mô phỏng thất bại)
-    Web->>API: POST /sandbox-bank/checkout/process<br/>Body: {checkoutToken, action}
-    Note over API,DB: PESSIMISTIC LOCK Wallet<br/>Kiểm tra hạn 15 phút (nếu quá hạn -> FAILED, HTTP 410)<br/>Cập nhật Balance & Ghi nhận WalletLedger (Append-Only)<br/>Chuyển trạng thái sang SUCCEEDED
-    API-->>Web: Hiển thị trang kết quả giao dịch (CSP-compliant, external static assets)
-    User->>App: Quay trở lại ứng dụng FNMF
-    App->>API: GET /api/payments/{id} (trong onResume)
-    API-->>App: Trả về trạng thái SUCCEEDED
-    App->>User: Thông báo thành công & Tự động làm mới số dư ví
+Cac buoc thuc hien:
+1. **Fetch tin tuc goc:** `AiNewsService` goi Alpha Vantage REST API voi `function=NEWS_SENTIMENT`, lay danh sach bai bao tai chinh quoc te gan nhat.
+2. **Kiem tra Cache theo URL:** Moi bai bao duoc nhan dien duy nhat bang `articleUrl`. Neu bai bao da ton tai trong bang `NEWS_AI_CACHE` va da co ban dich / phan tich hop le, backend su dung lai ket qua cache.
+3. **Phan tich bang Gemini AI:** Neu la bai bao moi, backend trich xuat tieu de va ban tom tat goc truyen sang Gemini qua OpenAI-compatible endpoint. System prompt yeu cau:
+   - Dich tieu de sang tieng Viet tu nhien.
+   - Tom tat noi dung cot loi thanh 2 den 4 gach dau dong (bullet points) su kien that.
+   - Xac dinh nhan tam ly (`BULLISH`, `BEARISH`, `NEUTRAL`), diem tin cay (`confidencePct`), va ly do danh gia (`reason`).
+4. **Luu tru CSDL & Dong bo Room DB:** Ket qua duoc luu vao `NEWS_AI_CACHE`. Android client nhan du lieu va tu dong upsert vao Room Database cuc bo de ho tro xem offline khi mat ket noi.
+
+### 6.2. Co che dieu phoi Single-Flight va Graceful Degradation
+- **AlphaNewsCoordinator:** Khoa `refreshLock` bao phu toan bo pipeline de ngan ngua tinh trang nhieu client cung goi lam dot quota Alpha Vantage (rate limit 5 req/phut).
+- **Gemini Failure Cooldown (10 phut):** Khi Alpha Vantage tra ve tin thanh cong nhung Gemini gap loi, he thong giu raw snapshot trong RAM va thiet lap cooldown 10 phut cho Gemini; trong thoi gian cooldown khong goi lai Gemini ma su dung cache san co; het cooldown tu dong retry bang snapshot ma khong goi lai Alpha Vantage.
+- **Nguyen tac bat bien:** Khong bao gio su dung Regex tu che de bia dat noi dung hoac tao du lieu gia. Neu khong co tin, tra ve trang thai `empty` hoac `degraded` mot cach minh bach.
+
+---
+
+## 7. Luong Quan ly Danh muc theo doi (Watchlist Cloud CRUD & Room Sync)
+
+- **Cloud CRUD:** Ho tro day du cac thao tac ca nhan hoa:
+  - `GET /api/watchlist`: Lay danh muc cua nguoi dung hien tai (xac thuc qua Bearer JWT), tu dong lam giau voi gia thi truong thoi gian thuc va ty le bien dong 24h.
+  - `GET /api/watchlist/ai-insights`: Quet toan bo cac ma trong Watchlist de tong hop nhan dinh AI va tin tuc lien quan.
+  - `POST /api/watchlist`: Them ma vao danh muc theo doi, kiem tra chong trung lap.
+  - `DELETE /api/watchlist/{symbol}`: Xoa ma khoi danh muc.
+- **Phan lap du lieu theo User:** Danh muc theo doi duoc luu trong bang `WATCHLISTS` voi khoa ngoai `user_id`. Phia Android, Room DB luu tru cache watchlist phan tach theo `userEmail`, bao dam khi doi tai khoan tren cung mot thiet bi khong bi tron lan du lieu.
+
+---
+
+## 8. Quan ly Vi & So cai bien dong so du (Wallet & Append-Only Ledger)
+
+- **Von khoi tao ban dau:** Moi tai khoan dang ky moi duoc cap tu dong mot vi trong bang `WALLETS` voi `balance_usd = 10000.00` va `initial_balance = 10000.00`.
+- **So cai bien dong so du don (Single-Entry Append-Only Ledger):**
+  - Bang `WALLET_LEDGER` luu tru lich su bat bien cua moi giao dich lam thay doi so du vi.
+  - Cac loai bien dong (`entry_type`):
+    - `DEPOSIT`: Nap tien Sandbox.
+    - `WITHDRAWAL`: Rut tien Sandbox.
+    - `TRADE_BUY`: Khau tru tien de mua tai san Paper Trading.
+    - `TRADE_SELL`: Cong tien thu duoc tu lenh ban tai san Paper Trading.
+    - `ADMIN_ADJUSTMENT`: Dieu chinh so du boi quan tri vien.
+  - Moi dong so cai luu giu: `wallet_id`, `entry_type`, `amount_usd`, `balance_before`, `balance_after`, `reference_id`, `description`, va `created_at`.
+  - He thong khong tuyen bo sai la ke toan kep (double-entry), ma ap dung mo hinh so cai kiem toan don bat bien chuan muc cho he thong vi nguoi dung.
+
+---
+
+## 9. Cong Thanh toan Sandbox & Nap/Rut tien (Simulated Banking Architecture / VNPay Sandbox)
+
+### 9.1. Dinh vi kien truc va Chinh sach Zero-Risk
+Module Nap/Rut tien duoc thiet ke de minh hoa kien truc Payment Gateway va Core Banking trong do an:
+- **Chinh sach Zero-Risk:** 100% nguon tien la USD mo phong (Sandbox). Tuyet doi khong tich hop cong the tin dung that, khong luu tru thong tin nhay cam (so the, CVV, OTP).
+- **Kien truc Provider-Neutral:** Tach biet ro giua tang nghiep vu (`PaymentService`), tang dinh tuyen (`PaymentProviderRegistry`), va nha cung cap mo phong noi bo (`InternalSandboxPaymentProvider` voi ma cau hinh `SANDBOX_INTERNAL`).
+- **Hosted Checkout Simulation:** Khi tao don nap hoac rut tien, backend sinh mot `checkoutToken` duy nhat kem `expiresAt` (+15 phut) va tra ve `checkoutUrl`. Android mo giao dien thanh toan qua Chrome Custom Tabs hoac trinh duyet ngoai.
+
+### 9.2. May trang thai Don hang (Order State Machine) va Het han 15 phut
+```
+[PENDING] (Khoi tao don, cho thanh toan, han 15 phut)
+    |
+    +---> [PROCESSING] (Bat dau xu ly tren giao dien web)
+    |         |
+    |         +---> [SUCCEEDED] (Xac nhan thanh cong -> PESSIMISTIC LOCK -> Cap nhat vi -> Ghi WALLET_LEDGER)
+    |         |
+    |         +---> [FAILED] (Tu choi / Loi / Het han 15 phut -> Tra HTTP 410 GONE)
+    |
+    +---> [CANCELLED] (Nguoi dung chu dong huy don)
 ```
 
-### 13.3. Máy trạng thái đơn hàng (Order State Machine)
-```
-          ┌─────────────┐
-          │   PENDING   │ (Đơn hàng khởi tạo, chờ thanh toán, hạn 15 phút)
-          └──────┬──────┘
-                 │
-                 ├──[Bắt đầu xử lý / Callback]──► ┌──────────────┐
-                 │                               │  PROCESSING  │
-                 │                               └───────┬──────┘
-                 │                                       │
-                 ├──[Xác nhận thành công]────────► ┌─────▼────────┐
-                 │                                │  SUCCEEDED   │ (Cộng/Trừ ví + Ghi sổ cái wallet_ledger)
-                 │                                └──────────────┘
-                 │
-                 ├──[Từ chối / Quá số dư / Hết hạn 15p (HTTP 410)]► ┌────────────┐
-                 │                                                 │    FAILED    │
-                 │                                                 └──────────────┘
-                 │
-                 └──[Người dùng chủ động hủy]────────────────────► ┌─────────────┐
-                                                                   │  CANCELLED  │
-                                                                   └─────────────┘
-```
+- **Quy tac rang buoc scale so tien:** So tien nap/rut bat buoc phai co scale <= 2 (vi du: `$500.00` hoac `$120.50`), khong vuot qua han muc `$100,000.00` USD mot lan.
+- **Kiem soat het han 15 phut:** Moi truy cap giao dien hosted checkout hoac xu ly thanh toan sau khi da qua moc `expiresAt` deu bi tu choi voi ma HTTP 410 `GONE`, dong thoi chuyen trang thai don hang thanh `FAILED`.
+- **Tuan thu CSP tren Railway:** Giao dien Hosted Checkout khong dung inline script hoac inline style, su dung cac file asset rieng biet `/sandbox-checkout.css` va `/sandbox-checkout.js` tuan thu chinh sach Content Security Policy.
 
-### 13.4. Bảng hợp đồng API Sandbox Banking (API Contracts)
-| Endpoint | Phương thức | Header | Body / Tham số | Mô tả & Xử lý |
-| :--- | :---: | :--- | :--- | :--- |
-| `/api/payments/deposits` | `POST` | `Authorization: Bearer <token>` | `{"amountUsd": 500.00, "clientRequestId": "uuid"}` | Tạo yêu cầu nạp tiền Sandbox. Thiếu/sai token -> HTTP 401. Kiểm tra scale <= 2, sinh `checkoutToken` kèm `expiresAt` (+15 phút). Trả về HTTP 200 (hoặc 409 nếu trùng requestId nhưng đổi số tiền). |
-| `/api/payments/withdrawals` | `POST` | `Authorization: Bearer <token>` | `{"amountUsd": 200.00, "clientRequestId": "uuid"}` | Tạo yêu cầu rút tiền Sandbox. Thiếu/sai token -> HTTP 401. Không đủ số dư khả dụng -> HTTP 422. |
-| `/api/payments` | `GET` | `Authorization: Bearer <token>` | Không | Lấy lịch sử tất cả các giao dịch Nạp/Rút của tài khoản (mới nhất xếp trước). |
-| `/api/payments/{id}` | `GET` | `Authorization: Bearer <token>` | `id`: Long (Path variable) | Lấy chi tiết trạng thái đơn hàng (dùng để polling sau khi quay lại từ trình duyệt). |
-| `/api/payments/{id}/cancel`| `POST` | `Authorization: Bearer <token>` | `id`: Long (Path variable) | Hủy yêu cầu đang ở trạng thái `PENDING` hoặc `PROCESSING`. |
-| `/sandbox-bank/checkout/{token}` | `GET` | Public (trên Browser) | `token`: String | Trang HTML mô phỏng cổng thanh toán (Hosted Simulation UI). Tuân thủ 100% CSP Railway (sử dụng `/sandbox-checkout.css` và `/sandbox-checkout.js`, không inline style/script). Quá hạn 15 phút -> HTTP 410 GONE. |
-| `/sandbox-bank/checkout/process` | `POST`| Form Post (Browser) | `checkoutToken`, `action` (`APPROVE` / `FAIL`) | Xử lý hành động mô phỏng từ người dùng, thực hiện khóa bi quan và hạch toán số dư vào `wallet_ledger`. Quá hạn 15 phút -> HTTP 410 GONE. |
+---
 
-### 13.5. Quy định ràng buộc & Giới hạn kỹ thuật (RC2 Hardening)
-1. **Quy chuẩn đơn vị tiền tệ:** Toàn bộ số tiền nạp/rút tính bằng `USD`, bắt buộc có scale tối đa là 2 chữ số thập phân (cents, ví dụ: `$100.50`). Mọi request có scale > 2 đều bị từ chối với HTTP 400.
-2. **Hạn mức giao dịch:** Giới hạn mỗi lệnh tối đa là `$100,000.00 USD` nhằm bảo vệ tính toàn vẹn của hệ thống giả lập.
-3. **Thời hạn Token thanh toán (15-Minute Expiry):** `checkoutToken` có hiệu lực tối đa trong vòng 15 phút (`expiresAt`). Mọi thao tác truy cập checkout hoặc xử lý thanh toán khi đã hết hạn đều bị từ chối với HTTP 410 `GONE`, đồng thời chuyển trạng thái đơn hàng sang `FAILED` (lý do: "Giao dịch đã hết hạn thanh toán (quá 15 phút)").
-4. **Tuân thủ CSP Railway Production:** Giao diện Hosted Checkout tuyệt đối không chứa inline CSS (`<style>` hoặc `style="..."`) và không chứa inline JS (`<script>` hoặc `onsubmit="..."`). Toàn bộ asset được tách biệt vào static files `/sandbox-checkout.css` và `/sandbox-checkout.js`, tuân thủ chính sách `script-src 'self'; style-src 'self'`.
-5. **Chống giả mạo dữ liệu phía Android (Anti-Fake Defaults):** `PaymentHistoryAdapter` và `PaymentItemFormatter` bảo vệ giao diện khi các trường server trả về `null` bằng ký tự gạch ngang `"—"` hoặc `"UNKNOWN"`, tuyệt đối không tự ý gán số tiền giả `$0.00`, mã đơn `#0` hoặc trạng thái `PENDING`. Nút thao tác chỉ mở khi có `orderId` hợp lệ.
-6. **Bền bỉ vòng đời & Chống mất khóa Idempotency:** Android client quản lý `PaymentIdempotencyManager` và `activePendingOrderId` lưu vết qua `Bundle` và `SharedPreferences`, bảo toàn khóa idempotency khi xoay màn hình hoặc tiến trình bị hệ thống thu hồi (process death). Mọi Retrofit `Call` đều được hủy an toàn trong `onDestroyView()`.
-7. **Vị trí giao diện trên Android:** Toàn bộ tính năng Nạp/Rút tiền được tích hợp gọn gàng bên trong tab **Ví & Hồ sơ** (`WalletProfileFragment`), không thêm Bottom Navigation thứ sáu, tuân thủ nguyên tắc thiết kế tối giản của ứng dụng.
+## 10. Co so du lieu, Flyway Migrations (V1 den V8) & Quan ly Schema
 
+Toan bo co so du lieu PostgreSQL tren Railway duoc quan ly phien ban chat che bang Flyway Migrations tu V1 den V8:
+
+1. `V1__init_schema.sql`: Khoi tao 7 bang ban dau (`users`, `wallets`, `holdings`, `transactions`, `watchlists`, `news_ai_cache`, `market_forecasts`).
+2. `V2__normalize_and_enforce_user_email.sql`: Chuan hoa mo hinh email-only, xoa cot username, bo sung rang buoc duy nhat `LOWER(email)`.
+3. `V3__holding_unique_constraint_and_client_order_id.sql`: Bo sung rang buoc duy nhat `UNIQUE (wallet_id, symbol)` va cot `client_order_id` trong `transactions`.
+4. `V4__add_payment_orders_and_checkout_token.sql`: Khoi tao bang `payment_orders` voi cac truong token checkout, loai don, so tien va trang thai.
+5. `V5__add_wallet_ledger_audit.sql`: Khoi tao bang so cai kiem toan `wallet_ledger` luu tru bien dong so du bat bien.
+6. `V6__add_payment_events_and_scale_guards.sql`: Khoi tao bang `payment_events` luu vet su kien thanh toan va rang buoc scale so tien.
+7. `V7__harden_payment_flow_and_order_indexes.sql`: Bo sung chi muc cho `payment_orders` (`expires_at`, `checkout_token`) va kiem soat qua han.
+8. `V8__add_forecast_source_and_metadata.sql`: Bo sung cot `source` (`AI_GEMINI` hoac `HEURISTIC_FALLBACK`) va metadata danh gia chat luong ban du bao.
+
+---
+
+## 11. Vong doi ung dung, Tinh luy thua (Idempotency) & Nguon su that duy nhat (SSOT)
+
+### 11.1. Quan ly Vong doi tren Android Client
+- Cac Fragment (`ForecastFragment`, `NewsFeedFragment`, `WalletProfileFragment`, `TradingFragment`) deu tuan thu ngat nghe quy tac huy Retrofit `Call` hoac coroutine job ben trong `onDestroyView()`.
+- Ngan ngua ro ri bo nho (memory leak) va khong bao gio cap nhat UI sau khi view da bi tieu huy.
+- `PaymentIdempotencyManager` luu tru khoa `clientRequestId` trong `Bundle` va `SharedPreferences`, bao toan khoa khi xoay man hinh hoac khi he dieu hanh thu hoi tien trinh (process death).
+
+### 11.2. Tinh luy thua (Idempotency)
+- **Paper Trading:** Su dung `clientOrderId` (UUID). Replay ket qua neu nhan trung lenh.
+- **Sandbox Payment:** Su dung `clientRequestId` (UUID) co rang buoc duy nhat trong bang `payment_orders`. Neu client gui lai cung mot request ID voi cung so tien, server tra ve don hang hien tai; neu doi so tien, server tra ve HTTP 409 Conflict.
+
+### 11.3. Nguon su that duy nhat (Single Source of Truth)
+- Server Backend la nguon su that duy nhat cho: so du vi, danh muc nam giu, gia authoritative khop lenh, du bao AI va lich su giao dich.
+- Room Database tren thiet bi Android chi dong vai tro bo nho dem ngoai tuyen (offline cache), khong bao gio tu sinh du lieu thay the server.
+
+---
+
+## 12. Danh gia Kiem thu, Gioi han ky thuat & Huong phat trien (Test Tiers & Known Limitations)
+
+### 12.1. Cac tang Kiem thu trong Du an (Test Tiers)
+He thong FNMF ap dung cac lop kiem thu ro rang, khong danh dong giua cac tang:
+1. **Backend Unit & Integration Tests (184 test pass hoan toan):**
+   - Kiem thu logic khop lenh, khoa bi quan, chong am vi, cong thuc DCA va PnL.
+   - Kiem thu bao ve toan ven du bao AI, chinh sach chat luong Forecast, va fallback phu hop.
+   - Kiem thu pipeline News AI, single-flight coordinator, va cache PostgreSQL.
+   - Kiem thu module Payment Sandbox, so cai `wallet_ledger`, kiem soat het han 15 phut va idempotency.
+2. **Android Unit Tests (Chay cuc bo tren JVM):**
+   - Kiem thu Parser, Model DTO, Formatter, hop dong ApiService, va logic Idempotency Manager.
+3. **Android Connected Instrumented Tests (10 test tren thiet bi that Samsung):**
+   - 9 test nghiep vu bao mat va migration: ma hoa AndroidKeyStore AES-GCM, SQLite/Room migration, luu tru phien an toan.
+   - 1 test `ExampleInstrumentedTest` kiem tra application context.
+4. **Manual Smoke Checklist:**
+   - Kiem tra thu cong tren thiet bi that Samsung cho toan bo cac tinh nang: Khoi dong, Dang nhap, Trading/WebSocket, Du bao AI, Tin tuc AI, Watchlist, Vi va Deep Link.
+
+### 12.2. Gioi han ky thuat hien tai (Known Limitations)
+1. **Nguon du lieu Dau tho WTI (USOIL):** Cac nha cung cap du lieu hang hoa phai sinh WTI Spot thoi gian thuc yeu cau chi phi ban quyen lon. Du an tam hoan ho tro ma dau tho va tu choi an toan voi HTTP 422 `UNSUPPORTED_SYMBOL` thay vi dung gia gia mo phong.
+2. **Dong tien co so don nhat:** Toan bo he thong dinh gia, tinh toan so du vi va khop lenh theo dong USD/USDT, chua ho tro da vi ngoai te fiat (VND, EUR).
+3. **Giao dich va Thanh toan mo phong:** Paper Trading va Sandbox Banking duoc thiet ke cho muc tieu nghien cuu va hoc tap, khong giao dich tien that tren san thuc te.

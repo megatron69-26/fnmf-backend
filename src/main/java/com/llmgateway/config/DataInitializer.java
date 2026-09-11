@@ -305,7 +305,7 @@ public class DataInitializer implements CommandLineRunner {
 
             Resource resource = resourceLoader.getResource("classpath:news_cache_seed.json");
             if (!resource.exists()) {
-                log.warn("news_cache_seed.json không tồn tại trên classpath.");
+                log.info("news_cache_seed.json không tồn tại trên classpath (bỏ qua nạp seed tin tức).");
                 return;
             }
 

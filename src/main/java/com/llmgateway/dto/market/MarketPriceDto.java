@@ -37,6 +37,10 @@ public class MarketPriceDto {
         this.fetchedAt = fetchedAt != null ? fetchedAt : lastUpdated;
     }
 
+    public MarketPriceDto(String symbol, String name, BigDecimal price, BigDecimal change24h, Boolean stale, String source) {
+        this(symbol, name, "CRYPTO", price, change24h, price, price, "2026-09-11T12:00:00", stale, source, "2026-09-11T12:00:00");
+    }
+
     public String getSymbol() {
         return symbol;
     }

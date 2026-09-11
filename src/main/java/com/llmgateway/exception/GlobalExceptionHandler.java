@@ -76,6 +76,20 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * AI Forecast service unavailable or unfulfillable without fabrication.
+     */
+    @ExceptionHandler(ForecastUnavailableException.class)
+    public ResponseEntity<Map<String, Object>> handleForecastUnavailable(ForecastUnavailableException ex) {
+        log.warn("Forecast unavailable: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(Map.of(
+                "status", "ERROR",
+                "code", "FORECAST_UNAVAILABLE",
+                "message", ex.getMessage() != null ? ex.getMessage() : "Chưa thể tạo nhận định lúc này. Vui lòng thử lại sau.",
+                "timestamp", Instant.now().toString()
+        ));
+    }
+
+    /**
      * Idempotency conflict (cùng key nhưng payload khác nhau).
      */
     @ExceptionHandler(IdempotencyConflictException.class)
