@@ -86,11 +86,27 @@ public class GeminiForecastClient {
             2. Xác định Xu hướng: BULLISH_UPTREND, BEARISH_DOWNTREND, hoặc SIDEWAYS_CONSOLIDATION.
             3. Khuyến nghị dứt khoát: STRONG_BUY, BUY, HOLD, SELL, hoặc STRONG_SELL.
             4. Chỉ số độ tin cậy confidenceScore bắt buộc là một số nguyên từ 0 đến 100.
-            5. Cung cấp đúng 2 đến 5 luận điểm then chốt (keyDrivers), giải thích diễn biến giá thực tế.
-            6. Toàn bộ nội dung gửi ra UI (keyDrivers, technicalOutlook, fundamentalOutlook) PHẢI VIẾT THUẦN TIẾNG VIỆT CHUYÊN NGHIỆP:
+            5. Toàn bộ nội dung gửi ra UI (keyDrivers, technicalOutlook, fundamentalOutlook) PHẢI VIẾT THUẦN TIẾNG VIỆT CHUYÊN NGHIỆP:
                - TUYỆT ĐỐI KHÔNG DÙNG CÁC TỪ TIẾNG ANH CHƯA DỊCH: 'bullish', 'bearish', 'sideways', 'support', 'resistance', 'long', 'short', 'volume', 'outlook', 'sentiment', 'forecast', 'action plan'.
                - BẮT BUỘC DÙNG THUẬT NGỮ TIẾNG VIỆT TƯƠNG ỨNG: 'xu hướng tăng', 'xu hướng giảm', 'đi ngang', 'hỗ trợ', 'kháng cự', 'vị thế mua', 'vị thế bán', 'khối lượng', 'nhận định', 'tâm lý thị trường', 'kịch bản tham khảo'.
                - Chỉ giữ nguyên các mã ticker, tên riêng và từ viết tắt nghiệp vụ thực sự cần thiết (BTC, ETH, USD, USDT, VND, ETF, RSI, MACD, FED, SEC, FOMC, GDP, CPI, DXY, EMA, SMA, OHLCV, Nvidia, Apple, Microsoft, Tesla, Binance, Coinbase, Bitcoin, Ethereum, Solana).
+            6. QUY ĐỊNH ĐỘ DÀI VÀ NGẮN GỌN (BẮT BUỘC):
+               - technicalOutlook: đúng 1 câu tiếng Việt, tối đa 140 ký tự.
+               - fundamentalOutlook: đúng 1 câu tiếng Việt, tối đa 140 ký tự.
+               - keyDrivers: đúng 3 ý; mỗi ý là 1 câu tiếng Việt, tối đa 85 ký tự.
+               - Tuyệt đối không xuống dòng (không dùng ký tự \\n hoặc ngắt dòng) bên trong từng chuỗi văn bản.
+               - Không lặp lại giá hiện tại, ngưỡng hỗ trợ và kháng cự ở nhiều phần.
+               - Chỉ giữ thông tin quan trọng nhất, súc tích, không diễn giải dài dòng.
+               - Tuyệt đối không dùng Markdown (in đậm, in nghiêng, gạch đầu dòng -, *, •) bên trong nội dung chuỗi JSON.
+            
+            VÍ DỤ PHONG CÁCH MONG MUỐN:
+            technicalOutlook: "Giá đang giữ trên vùng hỗ trợ, trong khi khối lượng cho thấy lực bán suy yếu."
+            fundamentalOutlook: "Tâm lý thị trường ổn định và chưa xuất hiện thông tin vĩ mô bất lợi đáng kể."
+            keyDrivers: [
+              "Giá vẫn duy trì trên vùng hỗ trợ ngắn hạn.",
+              "Khối lượng giảm trong các phiên điều chỉnh.",
+              "Cấu trúc đỉnh và đáy chưa phá vỡ xu hướng tăng."
+            ]
             
             ĐỊNH DẠNG:
             Trả về DUY NHẤT một chuỗi JSON hợp lệ, KHÔNG bọc mã markdown ```json ... ```.
@@ -101,9 +117,9 @@ public class GeminiForecastClient {
               "resistanceLevel": <số thập phân ước lượng ngưỡng kháng cự>,
               "recommendation": "<STRONG_BUY | BUY | HOLD | SELL | STRONG_SELL>",
               "confidenceScore": <số nguyên từ 0 đến 100>,
-              "keyDrivers": ["<luận điểm thực tế 1 bằng tiếng Việt>", "<luận điểm thực tế 2 bằng tiếng Việt>"],
-              "technicalOutlook": "<nhận định kỹ thuật chi tiết bằng tiếng Việt>",
-              "fundamentalOutlook": "<nhận định vĩ mô / tâm lý bằng tiếng Việt>"
+              "keyDrivers": ["<luận điểm 1 tối đa 85 ký tự>", "<luận điểm 2 tối đa 85 ký tự>", "<luận điểm 3 tối đa 85 ký tự>"],
+              "technicalOutlook": "<đúng 1 câu tiếng Việt tối đa 140 ký tự>",
+              "fundamentalOutlook": "<đúng 1 câu tiếng Việt tối đa 140 ký tự>"
             }
             """;
 
@@ -153,7 +169,7 @@ public class GeminiForecastClient {
             HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString());
 
             if (response.statusCode() != 200) {
-                log.warn("Gemini forecast endpoint returned non-200 status: {}", response.statusCode());
+                log.warn("Gemini forecast endpoint returned non-200 status: {}, body: {}", response.statusCode(), response.body());
                 throw new ForecastUnavailableException("Dịch vụ AI phản hồi mã trạng thái " + response.statusCode());
             }
 
