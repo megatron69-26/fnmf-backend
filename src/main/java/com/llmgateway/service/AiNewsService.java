@@ -57,6 +57,12 @@ public class AiNewsService {
 
     private final AlphaNewsCoordinator alphaNewsCoordinator;
 
+    public static class GeminiRateLimitException extends RuntimeException {
+        public GeminiRateLimitException(String message) {
+            super(message);
+        }
+    }
+
     @Autowired
     public AiNewsService(NewsCacheService newsCacheService,
                          NewsAiCacheRepository newsAiCacheRepository,
@@ -299,7 +305,14 @@ public class AiNewsService {
                         enrichedList.add(rawItem);
                     } else {
                         NewsAnalysisRequest aiReq = new NewsAnalysisRequest(rawOriginalTitle, rawSummary, symbol, url);
-                        Optional<NewsAnalysisResponse> aiResOpt = analyzeWithGemini(aiReq);
+                        Optional<NewsAnalysisResponse> aiResOpt;
+                        try {
+                            aiResOpt = analyzeWithGemini(aiReq);
+                        } catch (GeminiRateLimitException gre) {
+                            log.warn("Gemini API đạt giới hạn tần suất HTTP 429 khi phân tích bài '{}'. Dừng ngay vòng xử lý các bài tiếp theo để bảo vệ quota.", rawOriginalTitle);
+                            alphaNewsCoordinator.recordGeminiFailure();
+                            break;
+                        }
 
                         if (aiResOpt.isPresent()) {
                             NewsAnalysisResponse aiRes = aiResOpt.get();
@@ -539,7 +552,13 @@ public class AiNewsService {
             return cachedResp;
         }
 
-        Optional<NewsAnalysisResponse> aiOpt = analyzeWithGemini(request);
+        Optional<NewsAnalysisResponse> aiOpt;
+        try {
+            aiOpt = analyzeWithGemini(request);
+        } catch (GeminiRateLimitException gre) {
+            log.warn("Gemini API đạt giới hạn tần suất HTTP 429 trong analyzeNewsArticle.");
+            aiOpt = Optional.empty();
+        }
         if (aiOpt.isEmpty()) {
             return new NewsAnalysisResponse(
                     rawOriginalTitle,
@@ -805,10 +824,15 @@ public class AiNewsService {
                 resp.setOriginalSummary(request.getContent());
                 resp.setDisplaySummaryVi(displaySummaryVi);
                 return Optional.of(resp);
+            } else if (response.statusCode() == 429) {
+                log.warn("Gemini API trả về mã lỗi HTTP 429");
+                throw new GeminiRateLimitException("Gemini API rate limit exceeded (HTTP 429)");
             } else {
                 log.warn("Gemini API trả về mã lỗi HTTP {}", response.statusCode());
                 return Optional.empty();
             }
+        } catch (GeminiRateLimitException gre) {
+            throw gre;
         } catch (Exception e) {
             log.warn("Lỗi khi gọi Gemini API: {}", e.getMessage());
             return Optional.empty();
