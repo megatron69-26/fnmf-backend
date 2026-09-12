@@ -145,3 +145,21 @@ Bản phát hành chính thức được ký số bằng Keystore Release riêng
 ## 8. KẾT LUẬN
 
 Hệ thống FNMF v1.1.18 đã hoàn tất các hạng mục kỹ thuật của Đợt 2, đáp ứng đầy đủ yêu cầu về kiểm thử, triển khai và tài liệu vận hành.
+
+---
+
+## 9. HOTFIX VÀ CẬP NHẬT SAU PHÁT HÀNH v1.1.18
+
+Sau khi hoàn tất đợt phát hành v1.1.18, hệ thống backend đã ghi nhận và triển khai các bản sửa lỗi bổ sung (hotfix) để tối ưu hóa hiển thị trên ứng dụng di động và bảo vệ hạn ngạch dịch vụ AI:
+
+### 9.1. Danh sách các commit hotfix trên kho mã nguồn Backend (megatron69-26/fnmf-backend)
+- `20b25a1`: Rút gọn nội dung Forecast. Giới hạn độ dài nhận định kỹ thuật (`technicalOutlook` tối đa 140 ký tự), nhận định cơ bản (`fundamentalOutlook` tối đa 140 ký tự) và đúng 3 yếu tố dẫn dắt chính (`keyDrivers`, mỗi ý tối đa 85 ký tự) nhằm bảo đảm hiển thị vừa vặn trên giao diện ứng dụng di động Android.
+- `3dffc56`: Làm sạch thông báo lỗi và log provider. Loại bỏ chi tiết phản hồi thô của nhà cung cấp dịch vụ khỏi nhật ký hệ thống và thông báo lỗi trả về cho client, ngăn ngừa nguy cơ lộ lọt thông tin nhạy cảm.
+- `527e455`: Ngừng vòng xử lý News khi Gemini trả 429. Bổ sung cơ chế phát hiện mã lỗi HTTP 429 từ Gemini API để lập tức dừng vòng lặp xử lý các bài báo tiếp theo (`break`), kích hoạt thời gian chờ (cooldown) và ưu tiên phục vụ dữ liệu đã lưu trong bộ nhớ đệm cơ sở dữ liệu, tránh gọi dồn dập và bảo vệ hạn ngạch cho dịch vụ Forecast.
+
+### 9.2. Triển khai trên môi trường sản xuất (Railway Production)
+- **Mã triển khai (Deployment ID):** `bc3e787b-ffb1-4e6f-b784-d7b02c1698ae`
+- **Trạng thái triển khai:** `SUCCESS`
+- **Phương thức thực hiện:** Triển khai trực tiếp qua công cụ dòng lệnh Railway CLI (`railway up --detach`), do đó trên bảng điều khiển giao diện Railway không liên kết trực tiếp commit SHA từ GitHub trong trường metadata.
+- **Xác nhận vận hành từ nhật ký:** Nhật ký máy chủ xác nhận cơ chế ngắt vòng lặp khi gặp mã lỗi 429 (`break-on-429`) đã vận hành chính xác trong luồng điều phối; thông tin này ghi nhận hành vi thực tế của hotfix trong phiên chạy, không suy diễn thành bằng chứng đối chiếu cho toàn bộ mã nguồn.
+

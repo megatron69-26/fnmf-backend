@@ -100,3 +100,13 @@ Chi tiet 10 bang du lieu trong CSDL:
 6. **Bao mat Production:**
    - Tren profile `prod`, `ProductionSecurityFilter` chan toan bo Swagger UI, OpenAPI spec, H2 Console va endpoint diagnostics bang HTTP 404.
    - Mat khau keystore, API keys va thong tin nhay cam khong duoc commit vao repository hoac in ra log.
+
+---
+
+## 4. Hotfix sau phát hành v1.1.18
+
+Sau khi phát hành phiên bản v1.1.18, hệ thống backend đã thực hiện các hotfix bổ sung sau:
+- Commit `20b25a1`: Rút gọn nội dung Forecast. Giới hạn độ dài nhận định kỹ thuật (`technicalOutlook` tối đa 140 ký tự), nhận định cơ bản (`fundamentalOutlook` tối đa 140 ký tự) và đúng 3 yếu tố dẫn dắt chính (`keyDrivers`, mỗi ý tối đa 85 ký tự) để hiển thị phù hợp trên giao diện ứng dụng di động Android.
+- Commit `3dffc56`: Làm sạch thông báo lỗi và log provider. Loại bỏ nội dung lỗi thô và chi tiết nhà cung cấp khỏi nhật ký máy chủ và phản hồi client.
+- Commit `527e455`: Ngừng vòng xử lý News khi Gemini trả 429. Ngắt ngay vòng lặp khi gặp mã 429 (`break`), kích hoạt thời gian chờ (cooldown) và ưu tiên phục vụ dữ liệu đã lưu trong cơ sở dữ liệu để bảo vệ hạn ngạch cho Forecast.
+- Triển khai Railway Production: Mã triển khai `bc3e787b-ffb1-4e6f-b784-d7b02c1698ae` đạt trạng thái `SUCCESS` (triển khai trực tiếp qua Railway CLI nên bảng điều khiển không gắn commit SHA). Nhật ký vận hành xác nhận cơ chế ngắt vòng lặp khi gặp lỗi 429 (`break-on-429`) đã hoạt động trong phiên điều phối thực tế; không suy diễn thành bằng chứng đối chiếu cho toàn bộ mã nguồn.

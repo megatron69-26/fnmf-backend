@@ -147,7 +147,7 @@ Endpoint: `GET /api/forecast/{symbol}?timeframe=24H_7D` va `POST /api/forecast/a
    - Yeu cau dinh dang dau ra la JSON thuan tuy, khong bao boc markdown backticks.
 3. **Quan ly Cache 15 phut trong PostgreSQL:**
    - Ket qua du bao duoc luu vao bang `MARKET_FORECASTS` voi TTL 15 phut.
-   - Cac request tiep theo trong vong 15 phut se duoc phuc vu truc tiep tu CSDL (`fromCache: true`), tiet kiem quota goi AI va giam do tre phan hoi xuong < 20ms.
+   - Cac request tiep theo trong vong 15 phut se duoc phuc vu truc tiep tu CSDL (`fromCache: true`), tiet kiem luot goi AI va phan hoi nhanh chong.
 4. **Phan loai nguon du bao minh bach (Flyway V8):**
    - Ban ghi luu ro cot `source`: `AI_GEMINI` khi duoc sinh boi Gemini 3.6 Flash, hoac `HEURISTIC_FALLBACK` khi he thong tam thoi chuyen sang mo hinh tinh toan ky thuat du phong luc Gemini gap su co mang.
 
