@@ -169,8 +169,8 @@ public class GeminiForecastClient {
             HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString());
 
             if (response.statusCode() != 200) {
-                log.warn("Gemini forecast endpoint returned non-200 status: {}, body: {}", response.statusCode(), response.body());
-                throw new ForecastUnavailableException("Dịch vụ AI phản hồi mã trạng thái " + response.statusCode());
+                log.warn("Gemini forecast endpoint returned non-200 status: {}", response.statusCode());
+                throw new ForecastUnavailableException("Chưa thể tạo nhận định lúc này");
             }
 
             String body = response.body();
