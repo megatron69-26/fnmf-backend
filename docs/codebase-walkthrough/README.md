@@ -30,7 +30,7 @@ flowchart LR
 
 Nguyen tac van hanh cot loi cua he thong:
 - **Client Mobile (Android):** Xay dung theo mau kien truc MVVM, su dung Retrofit 2 va OkHttp 3 de giao tiep REST API qua HTTPS, mo ket noi WebSocket doc lap voi Binance de nhan tick gia live, va duy tri Room Database cuc bo lam bo nho dem ngoai tuyen.
-- **Backend & AI Gateway (Spring Boot 3):** Dong vai tro la nguon su that duy nhat (Single Source of Truth) cho toan bo nghiep vu xac thuc, so du vi, danh muc tai san, lich su khop lenh va ban tin phan tich AI. He thong tuyet doi khong tin cay bat ky gia giao dich nao do client tu tinh toan gui len.
+- **Backend & AI Gateway (Spring Boot 3):** Dong vai tro la nguon su that duy nhat (Single Source of Truth) cho toan bo nghiep vu xac thuc, so du vi, danh muc tai san, lich su khop lenh va ban tin phan tich AI. He thong khong su dung gia giao dich do client tu tinh toan gui len ma xac dinh tu nguon gia authoritative cua backend.
 - **Lop dich vu ben ngoai:**
   - Binance REST API (`https://api.binance.com/api/v3/klines`, ticker) phuc vu chuoi nen that lich su va gia authoritative.
   - Binance WebSocket (`wss://stream.binance.com:9443/ws/...`) phuc vu cap nhat bieu do nhat ky tren client.
@@ -88,12 +88,12 @@ Uu diem cua kien truc Cloud Production:
 - **Nguon nen lich su:** Backend goi Binance REST API (`/api/v3/klines`) lay 30 cay nen ngay that cho cac ma duoc ho tro.
 - **Tick gia truc tiep:** Android mo ket noi Binance WebSocket nhan thong diep kline de cap nhat bieu do `MPAndroidChart` theo thoi gian thuc.
 - **Danh muc ma hop le:** `BTCUSDT`, `ETHUSDT`, `XAUUSD` (tham chieu `PAXGUSDT`).
-- **Chinh sach Symbol & Tu choi USOIL:** Ma `USOIL` va cac ma khong duoc ho tro bi tu choi tuyet doi voi HTTP 422 `UNSUPPORTED_SYMBOL`. He thong khong bao gio fallback ngam ve BTC.
+- **Chinh sach Symbol & Tu choi USOIL:** Ma `USOIL` va cac ma khong duoc ho tro bi tu choi voi HTTP 422 `UNSUPPORTED_SYMBOL`, khong fallback ngam ve BTC.
 - **Chinh sach Khong du lieu gia:** Backend da loai bo hoan toan cac ham sinh nen toan hoc mo phong, `Math.random()` va gia hardcode. Neu mat ket noi nha cung cap va chua co cache that, he thong tra ve HTTP 503 `DATA_UNAVAILABLE`. Neu da co cache that cua chinh ma do, he thong tra ve du lieu kem co `stale=true`.
 
 ### 4.2. Khop lenh Paper Trading voi Khoa bi quan (Pessimistic Locking)
 Khi nguoi dung dat lenh Mua hoac Ban (`POST /api/trade/order`):
-1. Client chi gui `symbol`, `side` (`BUY` hoac `SELL`), `quantity`, va `clientOrderId` (UUID). Client tuyet doi khong duoc phep truyen gia khop.
+1. Client chi gui `symbol`, `side` (`BUY` hoac `SELL`), `quantity`, va `clientOrderId` (UUID). Client khong truyen gia khop ma backend xac dinh truc tiep tu thi truong.
 2. `TradeController` yeu cau `MarketDataService` lay gia thi truong thoi gian thuc authoritative truc tiep tu Binance.
 3. `TradeService.executeOrder()` duoc thuc thi ben trong transaction co tinh toan ven ACID (`@Transactional`):
    - Ap dung khoa bi quan `@Lock(LockModeType.PESSIMISTIC_WRITE)` len ban ghi `Wallet` cua nguoi dung de tranh race condition khi co nhieu lenh gui cung luc.
@@ -133,23 +133,30 @@ sequenceDiagram
 
 ---
 
-## 5. Luong Du bao Thi truong AI (Market Forecast via Gemini 3.6 Flash & Quota Protection)
+## 5. Luồng Dự báo Thị trường AI (Market Forecast via Gemini 3.6 Flash & Quota Protection)
 
-### 5.1. Kien truc Pipeline Du bao AI
-Endpoint: `GET /api/forecast/{symbol}?timeframe=24H_7D` va `POST /api/forecast/analyze`.
+### 5.1. Kiến trúc Pipeline Dự báo AI
+Endpoint: `GET /api/forecast/{symbol}?timeframe=24H_7D` và `POST /api/forecast/analyze`.
 
-1. **Thu thap nguon du lieu da chieu:**
-   - 30 cay nen ky thuat OHLCV gan nhat tu Binance REST.
-   - Tin tuc vi mo va tam ly thi truong moi nhat trong bo nho dem `NEWS_AI_CACHE`.
-2. **Xay dung Prompt chuyen gia phan tich:**
-   - Prompt duoc dong goi trong `ForecastService`, yeu cau mo hinh Google Gemini (`gemini-3.6-flash`) dong vai chuyen gia tai chinh cao cap.
-   - Mo hinh phai danh gia: Xu huong (`trendPrediction`: `BULLISH_UPTREND`, `BEARISH_DOWNTREND`, `SIDEWAYS`), Vung Ho tro ky thuat (`supportLevel`), Vung Khang cu ky thuat (`resistanceLevel`), Khuyen nghi hanh dong (`recommendation`: `STRONG_BUY`, `BUY`, `HOLD`, `SELL`), va Diem tin cay (`confidenceScore` tu 0 den 100).
-   - Yeu cau dinh dang dau ra la JSON thuan tuy, khong bao boc markdown backticks.
-3. **Quan ly Cache 15 phut trong PostgreSQL:**
-   - Ket qua du bao duoc luu vao bang `MARKET_FORECASTS` voi TTL 15 phut.
-   - Cac request tiep theo trong vong 15 phut se duoc phuc vu truc tiep tu CSDL (`fromCache: true`), tiet kiem luot goi AI va phan hoi nhanh chong.
-4. **Phan loai nguon du bao minh bach (Flyway V8):**
-   - Ban ghi luu ro cot `source`: `AI_GEMINI` khi duoc sinh boi Gemini 3.6 Flash, hoac `HEURISTIC_FALLBACK` khi he thong tam thoi chuyen sang mo hinh tinh toan ky thuat du phong luc Gemini gap su co mang.
+1. **Thu thập nguồn dữ liệu đa chiều:**
+   - 30 cây nến kỹ thuật OHLCV gần nhất từ Binance REST thông qua `MarketDataService`.
+   - Tin tức vĩ mô và tâm lý thị trường mới nhất trong bộ nhớ đệm `NEWS_AI_CACHE`.
+2. **Điều phối luồng và xây dựng Prompt chuyên gia:**
+   - `ForecastService` đóng vai trò điều phối: kiểm tra tính khả dụng của giá thị trường thời gian thực, kiểm tra bản ghi hợp lệ trong `ForecastCacheService`, thu thập chuỗi nến và tin tức, chuyển dữ liệu cho `GeminiForecastClient` và kiểm duyệt đầu ra qua `ForecastQualityPolicy`.
+   - System prompt được đóng gói bên trong `GeminiForecastClient.java` (không nằm trong `ForecastService.java`), yêu cầu mô hình Google Gemini (`gemini-3.6-flash`) phân tích chuỗi nến thực tế kết hợp tin tức vĩ mô.
+   - Mô hình đánh giá: Xu hướng (`trendPrediction`: `BULLISH_UPTREND`, `BEARISH_DOWNTREND`, `SIDEWAYS_CONSOLIDATION`), vùng hỗ trợ kỹ thuật (`supportLevel`), vùng kháng cự kỹ thuật (`resistanceLevel`), khuyến nghị hành động (`recommendation`: `STRONG_BUY`, `BUY`, `HOLD`, `SELL`, `STRONG_SELL`), điểm tin cậy (`confidenceScore` từ 0 đến 100).
+   - Định dạng đầu ra yêu cầu JSON thuần túy, không bọc markdown backticks.
+   - Giới hạn nội dung hiển thị tiếng Việt ngắn gọn:
+     - `technicalOutlook`: đúng 1 câu tiếng Việt, tối đa 140 ký tự.
+     - `fundamentalOutlook`: đúng 1 câu tiếng Việt, tối đa 140 ký tự.
+     - `keyDrivers`: đúng 3 ý; mỗi ý là 1 câu tiếng Việt, tối đa 85 ký tự.
+3. **Quản lý Cache 15 phút trong PostgreSQL:**
+   - Kết quả dự báo được lưu vào bảng `MARKET_FORECASTS` với thời hạn hiệu lực 15 phút.
+   - Các yêu cầu tiếp theo trong vòng 15 phút được phục vụ trực tiếp từ CSDL (`fromCache: true`), tiết kiệm lượt gọi AI và phản hồi nhanh chóng.
+   - `ForecastCacheService` chỉ chấp nhận các bản ghi có nguồn phân tích `analysisSource = "GEMINI"`.
+4. **Lưu vết nguồn phân tích và xử lý sự cố (Flyway V8):**
+   - Bản ghi lưu vết nguồn phân tích tại cột `analysis_source` với giá trị chuẩn là `GEMINI`, kèm số lượng nến thực tế tại cột `candle_count`.
+   - Hệ thống không sử dụng dữ liệu giả hay mô hình dự phòng tự tạo. Khi Gemini hoặc cache hợp lệ không khả dụng, endpoint ném `ForecastUnavailableException` và trả về HTTP 503 với mã lỗi `FORECAST_UNAVAILABLE`.
 
 ---
 
@@ -170,10 +177,11 @@ Cac buoc thuc hien:
    - Xac dinh nhan tam ly (`BULLISH`, `BEARISH`, `NEUTRAL`), diem tin cay (`confidencePct`), va ly do danh gia (`reason`).
 4. **Luu tru CSDL & Dong bo Room DB:** Ket qua duoc luu vao `NEWS_AI_CACHE`. Android client nhan du lieu va tu dong upsert vao Room Database cuc bo de ho tro xem offline khi mat ket noi.
 
-### 6.2. Co che dieu phoi Single-Flight va Graceful Degradation
-- **AlphaNewsCoordinator:** Khoa `refreshLock` bao phu toan bo pipeline de ngan ngua tinh trang nhieu client cung goi lam dot quota Alpha Vantage (rate limit 5 req/phut).
-- **Gemini Failure Cooldown (10 phut):** Khi Alpha Vantage tra ve tin thanh cong nhung Gemini gap loi, he thong giu raw snapshot trong RAM va thiet lap cooldown 10 phut cho Gemini; trong thoi gian cooldown khong goi lai Gemini ma su dung cache san co; het cooldown tu dong retry bang snapshot ma khong goi lai Alpha Vantage.
-- **Nguyen tac bat bien:** Khong bao gio su dung Regex tu che de bia dat noi dung hoac tao du lieu gia. Neu khong co tin, tra ve trang thai `empty` hoac `degraded` mot cach minh bach.
+### 6.2. Cơ chế điều phối Single-Flight và Graceful Degradation
+- **AlphaNewsCoordinator:** Sử dụng khóa `refreshLock` bao phủ toàn bộ pipeline để ngăn ngừa tình trạng nhiều client gửi yêu cầu đồng thời làm quá tải kết nối tới Alpha Vantage.
+- **Xử lý giới hạn tần suất HTTP 429:** Khi Gemini phản hồi mã lỗi HTTP 429 (`GeminiRateLimitException`), `AiNewsService` lập tức ngắt vòng lặp (`break`), không gửi tiếp các bài báo còn lại để bảo vệ hạn ngạch dịch vụ AI cho Forecast, đồng thời kích hoạt trạng thái cooldown cho Gemini thông qua `alphaNewsCoordinator.recordGeminiFailure()`.
+- **Cơ chế Cooldown và tái sử dụng Snapshot:** Khi snapshot tin tức thô từ Alpha Vantage đã có trong RAM, nếu Gemini đang trong thời gian cooldown thì hệ thống ưu tiên phục vụ dữ liệu đã lưu trong cơ sở dữ liệu (`fromCache: true`) hoặc trả trạng thái degraded; khi hết cooldown, hệ thống tái sử dụng snapshot thô trong RAM để xử lý qua Gemini mà không cần gọi lại Alpha Vantage.
+- **Nguyên tắc an toàn dữ liệu:** Hệ thống không tự tạo dữ liệu giả mạo. Nếu không có tin tức mới hoặc dịch vụ gặp sự cố, hệ thống trả về trạng thái `empty` hoặc `degraded` một cách minh bạch, không ghi log thông tin bí mật hay nội dung phản hồi thô của nhà cung cấp.
 
 ---
 
@@ -208,7 +216,7 @@ Cac buoc thuc hien:
 
 ### 9.1. Dinh vi kien truc va Chinh sach Zero-Risk
 Module Nap/Rut tien duoc thiet ke de minh hoa kien truc Payment Gateway va Core Banking trong do an:
-- **Chinh sach Zero-Risk:** 100% nguon tien la USD mo phong (Sandbox). Tuyet doi khong tich hop cong the tin dung that, khong luu tru thong tin nhay cam (so the, CVV, OTP).
+- **Chinh sach Zero-Risk:** Toan bo nguon tien la USD mo phong (Sandbox). He thong khong tich hop cong the tin dung that, khong luu tru thong tin nhay cam (so the, CVV, OTP).
 - **Kien truc Provider-Neutral:** Tach biet ro giua tang nghiep vu (`PaymentService`), tang dinh tuyen (`PaymentProviderRegistry`), va nha cung cap mo phong noi bo (`InternalSandboxPaymentProvider` voi ma cau hinh `SANDBOX_INTERNAL`).
 - **Hosted Checkout Simulation:** Khi tao don nap hoac rut tien, backend sinh mot `checkoutToken` duy nhat kem `expiresAt` (+15 phut) va tra ve `checkoutUrl`. Android mo giao dien thanh toan qua Chrome Custom Tabs hoac trinh duyet ngoai.
 
@@ -242,7 +250,7 @@ Toan bo co so du lieu PostgreSQL tren Railway duoc quan ly phien ban chat che ba
 5. `V5__add_wallet_ledger_audit.sql`: Khoi tao bang so cai kiem toan `wallet_ledger` luu tru bien dong so du bat bien.
 6. `V6__add_payment_events_and_scale_guards.sql`: Khoi tao bang `payment_events` luu vet su kien thanh toan va rang buoc scale so tien.
 7. `V7__harden_payment_flow_and_order_indexes.sql`: Bo sung chi muc cho `payment_orders` (`expires_at`, `checkout_token`) va kiem soat qua han.
-8. `V8__add_forecast_source_and_metadata.sql`: Bo sung cot `source` (`AI_GEMINI` hoac `HEURISTIC_FALLBACK`) va metadata danh gia chat luong ban du bao.
+8. `V8__add_forecast_source_and_metadata.sql`: Bo sung 2 cot `analysis_source` (VARCHAR(50)) va `candle_count` (INTEGER) vao bang `market_forecasts` de luu vet nguon phan tich AI (gia tri chuan: `GEMINI`) va so luong nen ky thuat thuc te duoc phan tich.
 
 ---
 
@@ -269,7 +277,7 @@ Toan bo co so du lieu PostgreSQL tren Railway duoc quan ly phien ban chat che ba
 He thong FNMF ap dung cac lop kiem thu ro rang, khong danh dong giua cac tang:
 1. **Backend Unit & Integration Tests (184 test pass hoan toan):**
    - Kiem thu logic khop lenh, khoa bi quan, chong am vi, cong thuc DCA va PnL.
-   - Kiem thu bao ve toan ven du bao AI, chinh sach chat luong Forecast, va fallback phu hop.
+   - Kiem thu bao ve toan ven du bao AI, chinh sach chat luong Forecast, va xu ly khi Gemini khong kha dung (HTTP 503 FORECAST_UNAVAILABLE).
    - Kiem thu pipeline News AI, single-flight coordinator, va cache PostgreSQL.
    - Kiem thu module Payment Sandbox, so cai `wallet_ledger`, kiem soat het han 15 phut va idempotency.
 2. **Android Unit Tests (Chay cuc bo tren JVM):**
@@ -284,3 +292,12 @@ He thong FNMF ap dung cac lop kiem thu ro rang, khong danh dong giua cac tang:
 1. **Nguon du lieu Dau tho WTI (USOIL):** Cac nha cung cap du lieu hang hoa phai sinh WTI Spot thoi gian thuc yeu cau chi phi ban quyen lon. Du an tam hoan ho tro ma dau tho va tu choi an toan voi HTTP 422 `UNSUPPORTED_SYMBOL` thay vi dung gia gia mo phong.
 2. **Dong tien co so don nhat:** Toan bo he thong dinh gia, tinh toan so du vi va khop lenh theo dong USD/USDT, chua ho tro da vi ngoai te fiat (VND, EUR).
 3. **Giao dich va Thanh toan mo phong:** Paper Trading va Sandbox Banking duoc thiet ke cho muc tieu nghien cuu va hoc tap, khong giao dich tien that tren san thuc te.
+
+---
+
+## 13. Hotfix sau phát hành v1.1.18
+
+Sau khi phát hành phiên bản v1.1.18, hệ thống backend đã thực hiện các bản sửa lỗi (hotfix) để tối ưu hóa hiển thị trên giao diện Android và bảo vệ hạn ngạch dịch vụ AI:
+- Commit `20b25a1`: Rút gọn nội dung Forecast. Giới hạn độ dài nhận định kỹ thuật (`technicalOutlook` tối đa 140 ký tự), nhận định cơ bản (`fundamentalOutlook` tối đa 140 ký tự) và đúng 3 yếu tố dẫn dắt chính (`keyDrivers`, mỗi ý tối đa 85 ký tự) nhằm bảo đảm hiển thị vừa vặn trên giao diện ứng dụng di động Android.
+- Commit `3dffc56`: Làm sạch thông báo lỗi và log provider. Loại bỏ nội dung lỗi thô và chi tiết phản hồi từ nhà cung cấp khỏi nhật ký máy chủ, chuẩn hóa mã lỗi trả về cho client (`FORECAST_UNAVAILABLE`).
+- Commit `527e455`: Ngừng vòng xử lý News khi Gemini trả 429. Bổ sung cơ chế phát hiện mã lỗi HTTP 429 từ Gemini API để lập tức dừng vòng lặp (`break`), kích hoạt thời gian chờ (cooldown) và ưu tiên phục vụ dữ liệu đã lưu trong cơ sở dữ liệu để bảo vệ hạn ngạch cho Forecast.
