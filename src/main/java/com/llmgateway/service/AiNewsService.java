@@ -117,6 +117,10 @@ public class AiNewsService {
     //   3. NẾU LÀ BÀI MỚI: Gọi Gemini AI dịch và tóm tắt, sau đó lưu vào PostgreSQL
     //      để tái sử dụng cho các yêu cầu tiếp theo.
     public NewsSyncResult getLiveAiNewsSyncResult(String symbol, int limit) {
+        return getLiveAiNewsSyncResult(symbol, limit, false);
+    }
+
+    public NewsSyncResult getLiveAiNewsSyncResult(String symbol, int limit, boolean forceRefresh) {
         if (!isValidLimit(limit)) {
             throw new IllegalArgumentException("Tham số limit phải nằm trong khoảng từ 1 đến " + MAX_LIMIT);
         }
@@ -126,8 +130,8 @@ public class AiNewsService {
         // 1. Kiểm tra cache PostgreSQL tiếng Việt hợp lệ hiện có
         List<NewsFeedItemDto> cachedItems = getValidLocalizedCacheItems(symbol, limit);
 
-        // 2. Nếu cache tiếng Việt có bài và còn mới (trong vòng 90 phút theo analyzedAt) -> Trả ngay
-        if (isCacheFresh(cachedItems)) {
+        // 2. Nếu không phải forceRefresh và cache tiếng Việt có bài còn mới -> Trả ngay
+        if (!forceRefresh && isCacheFresh(cachedItems)) {
             log.info("Sử dụng cache tin tức tiếng Việt PostgreSQL còn mới (trong vòng {} phút), không cần gọi Alpha Vantage",
                     alphaNewsCoordinator.getRefreshIntervalMinutes());
             return NewsSyncResult.ok(cachedItems);
@@ -158,7 +162,7 @@ public class AiNewsService {
         try {
             // Re-check cache sau khi có lock (trong trường hợp luồng trước vừa hoàn tất ghi DB)
             cachedItems = getValidLocalizedCacheItems(symbol, limit);
-            if (isCacheFresh(cachedItems)) {
+            if (!forceRefresh && isCacheFresh(cachedItems)) {
                 return NewsSyncResult.ok(cachedItems);
             }
 

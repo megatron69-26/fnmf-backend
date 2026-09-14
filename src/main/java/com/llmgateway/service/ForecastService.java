@@ -63,6 +63,10 @@ public class ForecastService {
      * tuyệt đối không sinh dữ liệu heuristic bịa đặt.
      */
     public ForecastResponse generateForecast(ForecastRequest request) {
+        return generateForecast(request, false);
+    }
+
+    public ForecastResponse generateForecast(ForecastRequest request, boolean bypassCache) {
         if (request == null || request.getSymbol() == null || request.getSymbol().isBlank()) {
             throw new IllegalArgumentException("Mã tài sản không được để trống");
         }
@@ -75,10 +79,12 @@ public class ForecastService {
             throw new MarketDataUnavailableException("Dữ liệu thị trường thời gian thực không khả dụng hoặc bị cũ (stale), không thể tạo dự báo cho mã: " + cleanSymbol);
         }
 
-        // 2. Kiểm tra CSDL xem có bản dự báo còn hạn từ nguồn GEMINI hay không
-        Optional<ForecastResponse> cached = forecastCacheService.getFreshForecast(cleanSymbol, priceDto);
-        if (cached.isPresent()) {
-            return cached.get();
+        // 2. Kiểm tra CSDL xem có bản dự báo còn hạn từ nguồn GEMINI hay không (bỏ qua nếu bypassCache = true)
+        if (!bypassCache) {
+            Optional<ForecastResponse> cached = forecastCacheService.getFreshForecast(cleanSymbol, priceDto);
+            if (cached.isPresent()) {
+                return cached.get();
+            }
         }
 
         // 3. Thu thập dữ liệu nến thực tế từ sàn & tin tức CSDL
@@ -115,5 +121,21 @@ public class ForecastService {
 
     public List<MarketForecast> getLatestForecasts() {
         return forecastRepository.findTop10ByOrderByCreatedAtDesc();
+    }
+
+    /**
+     * Lấy bản dự báo từ cache CSDL mà không gọi Gemini Provider (dùng cho Replay).
+     */
+    public Optional<ForecastResponse> getFreshForecastFromCacheOnly(String symbol) {
+        if (symbol == null || symbol.isBlank()) {
+            return Optional.empty();
+        }
+        String cleanSymbol = symbol.trim().toUpperCase();
+        MarketPriceDto priceDto = null;
+        try {
+            priceDto = marketDataService.getPriceBySymbol(cleanSymbol);
+        } catch (Exception ignored) {
+        }
+        return forecastCacheService.getFreshForecast(cleanSymbol, priceDto);
     }
 }

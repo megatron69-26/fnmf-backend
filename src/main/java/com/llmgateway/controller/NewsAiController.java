@@ -3,18 +3,29 @@ package com.llmgateway.controller;
 import com.llmgateway.dto.news.NewsAnalysisRequest;
 import com.llmgateway.dto.news.NewsAnalysisResponse;
 import com.llmgateway.dto.news.NewsFeedItemDto;
+import com.llmgateway.dto.news.NewsSyncResult;
+import com.llmgateway.dto.quota.RefreshQuotaDto;
 import com.llmgateway.entity.NewsAiCache;
+import com.llmgateway.exception.UnauthorizedException;
 import com.llmgateway.service.AiNewsService;
+import com.llmgateway.service.ContentRefreshQuotaService;
+import com.llmgateway.service.NewsPublisherResolver;
+import com.llmgateway.util.JwtUtil;
 import jakarta.validation.Valid;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -23,10 +34,23 @@ import java.util.Map;
 @RequestMapping("/api/news")
 public class NewsAiController {
 
+    private static final Logger log = LoggerFactory.getLogger(NewsAiController.class);
+
     private final AiNewsService aiNewsService;
+    private final ContentRefreshQuotaService quotaService;
+    private final JwtUtil jwtUtil;
 
     public NewsAiController(AiNewsService aiNewsService) {
+        this(aiNewsService, null, null);
+    }
+
+    @Autowired
+    public NewsAiController(AiNewsService aiNewsService,
+                            ContentRefreshQuotaService quotaService,
+                            JwtUtil jwtUtil) {
         this.aiNewsService = aiNewsService;
+        this.quotaService = quotaService;
+        this.jwtUtil = jwtUtil;
     }
 
     /**
@@ -40,7 +64,7 @@ public class NewsAiController {
             Map<String, Object> errResp = new HashMap<>();
             errResp.put("status", "error");
             errResp.put("message", "Tham số limit phải nằm trong khoảng từ 1 đến " + AiNewsService.MAX_LIMIT);
-            errResp.put("data", java.util.Collections.emptyList());
+            errResp.put("data", Collections.emptyList());
             return ResponseEntity.badRequest().body(errResp);
         }
         List<NewsFeedItemDto> feed = aiNewsService.getLiveAiNewsFeed(symbol, limit);
@@ -52,7 +76,7 @@ public class NewsAiController {
 
     /**
      * GET /api/news/sync?limit=5
-     * Endpoint cho Android APK 1.1.4
+     * Endpoint cho Android APK (tải thông thường, ưu tiên cache, không trừ hạn mức)
      */
     @GetMapping("/sync")
     public ResponseEntity<Map<String, Object>> getSyncNewsFeed(
@@ -62,16 +86,16 @@ public class NewsAiController {
             Map<String, Object> errResp = new HashMap<>();
             errResp.put("status", "error");
             errResp.put("message", "Tham số limit phải nằm trong khoảng từ 1 đến " + AiNewsService.MAX_LIMIT);
-            errResp.put("data", java.util.Collections.emptyList());
+            errResp.put("data", Collections.emptyList());
             return ResponseEntity.badRequest().body(errResp);
         }
 
-        com.llmgateway.dto.news.NewsSyncResult syncResult = aiNewsService.getLiveAiNewsSyncResult(symbol, limit);
+        NewsSyncResult syncResult = aiNewsService.getLiveAiNewsSyncResult(symbol, limit);
         if (!"ok".equals(syncResult.getStatus())) {
             Map<String, Object> statusResp = new HashMap<>();
             statusResp.put("status", syncResult.getStatus());
             statusResp.put("message", syncResult.getMessage());
-            statusResp.put("data", java.util.Collections.emptyList());
+            statusResp.put("data", Collections.emptyList());
             return ResponseEntity.ok(statusResp);
         }
 
@@ -80,10 +104,157 @@ public class NewsAiController {
             Map<String, Object> emptyResp = new HashMap<>();
             emptyResp.put("status", "empty");
             emptyResp.put("message", "Chưa có bản tin mới");
-            emptyResp.put("data", java.util.Collections.emptyList());
+            emptyResp.put("data", Collections.emptyList());
             return ResponseEntity.ok(emptyResp);
         }
 
+        List<Map<String, Object>> data = formatFeedItems(feed, limit);
+        Map<String, Object> response = new HashMap<>();
+        response.put("status", "ok");
+        response.put("data", data);
+        return ResponseEntity.ok(response);
+    }
+
+    /**
+     * POST /api/news/refresh
+     * Làm mới thủ công tin tức (Pull-to-refresh) có kiểm soát hạn mức dùng chung.
+     * Yêu cầu JWT hợp lệ và Client-Request-ID duy nhất.
+     */
+    @PostMapping("/refresh")
+    public ResponseEntity<Map<String, Object>> refreshNews(
+            @RequestHeader(value = "Authorization", required = false) String authHeader,
+            @RequestHeader(value = "Client-Request-ID", required = false) String headerRequestId,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
+            @RequestParam(required = false) String symbol,
+            @RequestParam(defaultValue = "5") int limit,
+            @RequestBody(required = false) Map<String, Object> body) {
+        Long userId = extractUserId(authHeader);
+
+        String clientRequestId = headerRequestId;
+        if (clientRequestId == null || clientRequestId.isBlank()) {
+            clientRequestId = idempotencyKey;
+        }
+        if ((clientRequestId == null || clientRequestId.isBlank()) && body != null && body.containsKey("clientRequestId")) {
+            clientRequestId = String.valueOf(body.get("clientRequestId"));
+        }
+        if (clientRequestId == null || clientRequestId.isBlank()) {
+            throw new IllegalArgumentException("Thiếu Header Client-Request-ID hoặc Idempotency-Key cho thao tác làm mới!");
+        }
+
+        if (body != null) {
+            if (symbol == null && body.containsKey("symbol")) {
+                symbol = String.valueOf(body.get("symbol"));
+            }
+            if (body.containsKey("limit")) {
+                try {
+                    limit = Integer.parseInt(String.valueOf(body.get("limit")));
+                } catch (NumberFormatException ignored) {
+                }
+            }
+        }
+
+        if (!AiNewsService.isValidLimit(limit)) {
+            limit = 5;
+        }
+
+        if (quotaService == null) {
+            throw new IllegalStateException("ContentRefreshQuotaService chưa được cấu hình");
+        }
+
+        // 1. Trừ lượt hạn mức dùng chung (Idempotent & Concurrency-safe)
+        RefreshQuotaDto quota = quotaService.acquireRefreshQuota(userId, clientRequestId, "NEWS");
+
+        // 2. Replay cùng Client-Request-ID: Tuyệt đối không gọi lại News provider
+        if (quota.isReplay()) {
+            log.info("REPLAY NEWS REQUEST | userId={} | clientRequestId={} -> Trả kết quả từ cache, không gọi News provider",
+                    userId, clientRequestId);
+            List<NewsFeedItemDto> cachedItems = aiNewsService.getValidLocalizedCacheItems(symbol, limit);
+            Map<String, Object> response = new HashMap<>();
+            response.put("maxDailyRefreshes", quota.getMaxDailyRefreshes());
+            response.put("usedRefreshes", quota.getUsedRefreshes());
+            response.put("remainingRefreshes", quota.getRemainingRefreshes());
+            response.put("quotaDate", quota.getQuotaDate());
+            if (cachedItems != null && !cachedItems.isEmpty()) {
+                response.put("status", "ok");
+                response.put("data", formatFeedItems(cachedItems, limit));
+            } else {
+                response.put("status", "empty");
+                response.put("message", "Chưa có bản tin mới");
+                response.put("data", Collections.emptyList());
+            }
+            return ResponseEntity.ok(response);
+        }
+
+        // 3. Thực hiện làm mới tin tức cưỡng bức qua pipeline có kiểm soát
+        try {
+            NewsSyncResult syncResult = aiNewsService.getLiveAiNewsSyncResult(symbol, limit, true);
+            Map<String, Object> response = new HashMap<>();
+            response.put("maxDailyRefreshes", quota.getMaxDailyRefreshes());
+            response.put("usedRefreshes", quota.getUsedRefreshes());
+            response.put("remainingRefreshes", quota.getRemainingRefreshes());
+            response.put("quotaDate", quota.getQuotaDate());
+
+            if (!"ok".equals(syncResult.getStatus())) {
+                response.put("status", syncResult.getStatus());
+                response.put("message", syncResult.getMessage());
+                response.put("data", Collections.emptyList());
+                return ResponseEntity.ok(response);
+            }
+
+            List<NewsFeedItemDto> feed = syncResult.getItems();
+            if (feed == null || feed.isEmpty()) {
+                response.put("status", "empty");
+                response.put("message", "Chưa có bản tin mới");
+                response.put("data", Collections.emptyList());
+                return ResponseEntity.ok(response);
+            }
+
+            List<Map<String, Object>> data = formatFeedItems(feed, limit);
+            response.put("status", "ok");
+            response.put("data", data);
+            return ResponseEntity.ok(response);
+        } catch (Exception ex) {
+            log.warn("Lỗi provider khi làm mới News sau khi đã trừ lượt: {}", ex.getMessage());
+            Map<String, Object> errResp = new HashMap<>();
+            errResp.put("status", "degraded");
+            errResp.put("message", "Dịch vụ xử lý tin tức tạm thời chưa sẵn sàng");
+            errResp.put("data", Collections.emptyList());
+            errResp.put("maxDailyRefreshes", quota.getMaxDailyRefreshes());
+            errResp.put("usedRefreshes", quota.getUsedRefreshes());
+            errResp.put("remainingRefreshes", quota.getRemainingRefreshes());
+            errResp.put("quotaDate", quota.getQuotaDate());
+            return ResponseEntity.ok(errResp);
+        }
+    }
+
+    /**
+     * GET /api/news/diagnostics
+     * Xác minh an toàn hệ thống tin tức & pipeline (Section E)
+     */
+    @GetMapping("/diagnostics")
+    public ResponseEntity<Map<String, Object>> getDiagnostics() {
+        return ResponseEntity.ok(aiNewsService.getDiagnostics());
+    }
+
+    /**
+     * POST /api/news/analyze
+     */
+    @PostMapping("/analyze")
+    public ResponseEntity<NewsAnalysisResponse> analyzeNews(@Valid @RequestBody NewsAnalysisRequest request) {
+        NewsAnalysisResponse response = aiNewsService.analyzeNews(request);
+        return ResponseEntity.ok(response);
+    }
+
+    /**
+     * GET /api/news/cache
+     */
+    @GetMapping("/cache")
+    public ResponseEntity<List<NewsAiCache>> getCachedNews() {
+        List<NewsAiCache> cachedNews = aiNewsService.getAllCachedNews();
+        return ResponseEntity.ok(cachedNews);
+    }
+
+    private List<Map<String, Object>> formatFeedItems(List<NewsFeedItemDto> feed, int limit) {
         List<Map<String, Object>> data = new ArrayList<>();
         int idCounter = 1;
         for (NewsFeedItemDto item : feed) {
@@ -120,8 +291,8 @@ public class NewsAiController {
 
             String publisher = (item.getPublisher() != null && !item.getPublisher().isBlank())
                     ? item.getPublisher().trim()
-                    : com.llmgateway.service.NewsPublisherResolver.resolvePublisher(item.getSource(), item.getUrl());
-            if (com.llmgateway.service.NewsPublisherResolver.isGeneric(publisher)) {
+                    : NewsPublisherResolver.resolvePublisher(item.getSource(), item.getUrl());
+            if (NewsPublisherResolver.isGeneric(publisher)) {
                 publisher = "";
             }
             map.put("source", publisher != null ? publisher : "");
@@ -140,36 +311,28 @@ public class NewsAiController {
                 break;
             }
         }
-        Map<String, Object> response = new HashMap<>();
-        response.put("status", "ok");
-        response.put("data", data);
-        return ResponseEntity.ok(response);
+        return data;
     }
 
-    /**
-     * GET /api/news/diagnostics
-     * Xác minh an toàn hệ thống tin tức & pipeline (Section E)
-     */
-    @GetMapping("/diagnostics")
-    public ResponseEntity<Map<String, Object>> getDiagnostics() {
-        return ResponseEntity.ok(aiNewsService.getDiagnostics());
-    }
-
-    /**
-     * POST /api/news/analyze
-     */
-    @PostMapping("/analyze")
-    public ResponseEntity<NewsAnalysisResponse> analyzeNews(@Valid @RequestBody NewsAnalysisRequest request) {
-        NewsAnalysisResponse response = aiNewsService.analyzeNews(request);
-        return ResponseEntity.ok(response);
-    }
-
-    /**
-     * GET /api/news/cache
-     */
-    @GetMapping("/cache")
-    public ResponseEntity<List<NewsAiCache>> getCachedNews() {
-        List<NewsAiCache> cachedNews = aiNewsService.getAllCachedNews();
-        return ResponseEntity.ok(cachedNews);
+    private Long extractUserId(String authHeader) {
+        if (authHeader == null || authHeader.isBlank()) {
+            throw new UnauthorizedException("Vui lòng đính kèm Bearer Token hợp lệ trong Header Authorization!");
+        }
+        String token = authHeader.trim();
+        if (token.startsWith("Bearer ") || token.startsWith("bearer ")) {
+            token = token.substring(7).trim();
+        }
+        if (token.startsWith("\"") && token.endsWith("\"") && token.length() > 1) {
+            token = token.substring(1, token.length() - 1).trim();
+        }
+        if (jwtUtil == null || !jwtUtil.validateToken(token)) {
+            log.warn("Xác thực Bearer token thất bại hoặc token đã hết hạn");
+            throw new UnauthorizedException("Token không hợp lệ hoặc đã hết hạn! Vui lòng đăng nhập lại để lấy token mới.");
+        }
+        Long userId = jwtUtil.getUserIdFromToken(token);
+        if (userId == null) {
+            throw new UnauthorizedException("Không thể xác định danh tính người dùng từ Token!");
+        }
+        return userId;
     }
 }

@@ -23,6 +23,12 @@ public class ForecastResponse {
     private boolean fromCache;          // true nếu lấy từ database cache
     private LocalDateTime createdAt;
 
+    // Hạn mức làm mới dùng chung (Shared Daily Refresh Quota)
+    private Integer maxDailyRefreshes;
+    private Integer usedRefreshes;
+    private Integer remainingRefreshes;
+    private String quotaDate;
+
     public ForecastResponse() {
     }
 
@@ -183,5 +189,46 @@ public class ForecastResponse {
 
     public void setGeneratedAt(LocalDateTime generatedAt) {
         this.createdAt = generatedAt;
+    }
+
+    public Integer getMaxDailyRefreshes() {
+        return maxDailyRefreshes;
+    }
+
+    public void setMaxDailyRefreshes(Integer maxDailyRefreshes) {
+        this.maxDailyRefreshes = maxDailyRefreshes;
+    }
+
+    public Integer getUsedRefreshes() {
+        return usedRefreshes;
+    }
+
+    public void setUsedRefreshes(Integer usedRefreshes) {
+        this.usedRefreshes = usedRefreshes;
+    }
+
+    public Integer getRemainingRefreshes() {
+        return remainingRefreshes;
+    }
+
+    public void setRemainingRefreshes(Integer remainingRefreshes) {
+        this.remainingRefreshes = remainingRefreshes;
+    }
+
+    public String getQuotaDate() {
+        return quotaDate;
+    }
+
+    public void setQuotaDate(String quotaDate) {
+        this.quotaDate = quotaDate;
+    }
+
+    public void applyQuota(com.llmgateway.dto.quota.RefreshQuotaDto quota) {
+        if (quota != null) {
+            this.maxDailyRefreshes = quota.getMaxDailyRefreshes();
+            this.usedRefreshes = quota.getUsedRefreshes();
+            this.remainingRefreshes = quota.getRemainingRefreshes();
+            this.quotaDate = quota.getQuotaDate();
+        }
     }
 }

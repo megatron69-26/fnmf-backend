@@ -103,6 +103,24 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * Hết hạn mức làm mới trong ngày (429 TOO_MANY_REQUESTS).
+     */
+    @ExceptionHandler(DailyRefreshLimitReachedException.class)
+    public ResponseEntity<Map<String, Object>> handleDailyRefreshLimitReached(DailyRefreshLimitReachedException ex) {
+        log.warn("Daily refresh quota reached: used={}/{}", ex.getUsedRefreshes(), ex.getMaxDailyRefreshes());
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(Map.of(
+                "status", "ERROR",
+                "code", "DAILY_REFRESH_LIMIT_REACHED",
+                "message", "Bạn đã dùng hết lượt làm mới hôm nay",
+                "maxDailyRefreshes", ex.getMaxDailyRefreshes(),
+                "usedRefreshes", ex.getUsedRefreshes(),
+                "remainingRefreshes", ex.getRemainingRefreshes(),
+                "quotaDate", ex.getQuotaDate(),
+                "timestamp", Instant.now().toString()
+        ));
+    }
+
+    /**
      * Unauthorized errors (Token thiếu, sai hoặc hết hạn).
      */
     @ExceptionHandler(UnauthorizedException.class)
