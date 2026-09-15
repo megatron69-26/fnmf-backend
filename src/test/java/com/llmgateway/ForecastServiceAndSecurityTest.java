@@ -290,4 +290,33 @@ public class ForecastServiceAndSecurityTest {
         RegisterRequest reqValid = new RegisterRequest("test@fnmf.com", "pass1234", "Test User"); // 8 ký tự
         assertTrue(validator.validate(reqValid).isEmpty(), "Mật khẩu 8 ký tự phải hợp lệ");
     }
+
+    @Test
+    @DisplayName("GeminiForecastClient cấu hình timeout 40s và ném ForecastUnavailableException an toàn khi HttpTimeoutException")
+    void testGeminiForecastClientTimeout40sAndHttpTimeoutHandling() throws Exception {
+        assertEquals(java.time.Duration.ofSeconds(40), GeminiForecastClient.REQUEST_TIMEOUT);
+
+        java.net.http.HttpClient mockHttp = mock(java.net.http.HttpClient.class);
+        GeminiForecastClient client = new GeminiForecastClient(objectMapper, mockHttp);
+        org.springframework.test.util.ReflectionTestUtils.setField(client, "geminiApiKey", "test-api-key");
+        org.springframework.test.util.ReflectionTestUtils.setField(client, "geminiApiUrl", "https://api.example.com/gemini");
+        org.springframework.test.util.ReflectionTestUtils.setField(client, "geminiModel", "gemini-3.6-flash");
+
+        when(mockHttp.send(any(java.net.http.HttpRequest.class), any()))
+                .thenThrow(new java.net.http.HttpTimeoutException("request timed out after 40s"));
+
+        MarketPriceDto price = new MarketPriceDto("BTCUSDT", "Bitcoin", new BigDecimal("65000.00"), new BigDecimal("2.5"), false, "BINANCE_REALTIME");
+        List<CandleDto> candles = List.of(new CandleDto("2026-09-15", new BigDecimal("64000"), new BigDecimal("66000"), new BigDecimal("63500"), new BigDecimal("65000"), new BigDecimal("1000")));
+
+        ForecastUnavailableException ex = assertThrows(ForecastUnavailableException.class, () ->
+                client.requestForecast("BTCUSDT", price, candles, List.of(), "24H_7D"));
+
+        assertEquals("Chưa thể tạo nhận định lúc này. Vui lòng thử lại sau.", ex.getMessage());
+
+        org.mockito.ArgumentCaptor<java.net.http.HttpRequest> reqCaptor = org.mockito.ArgumentCaptor.forClass(java.net.http.HttpRequest.class);
+        verify(mockHttp, times(1)).send(reqCaptor.capture(), any());
+
+        java.net.http.HttpRequest capturedReq = reqCaptor.getValue();
+        assertEquals(java.time.Duration.ofSeconds(40), capturedReq.timeout().orElse(null));
+    }
 }

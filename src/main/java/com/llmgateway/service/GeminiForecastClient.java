@@ -36,6 +36,7 @@ import java.util.Map;
 public class GeminiForecastClient {
 
     private static final Logger log = LoggerFactory.getLogger(GeminiForecastClient.class);
+    public static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(40);
     private static final int MAX_CANDLES_INPUT = 30;
 
     private final HttpClient httpClient;
@@ -162,7 +163,7 @@ public class GeminiForecastClient {
                     .uri(URI.create(geminiApiUrl))
                     .header("Content-Type", "application/json; charset=utf-8")
                     .header("Authorization", "Bearer " + geminiApiKey)
-                    .timeout(Duration.ofSeconds(20))
+                    .timeout(REQUEST_TIMEOUT)
                     .POST(HttpRequest.BodyPublishers.ofString(payload))
                     .build();
 
