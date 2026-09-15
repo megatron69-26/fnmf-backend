@@ -15,6 +15,7 @@ public class MarketPriceDto {
     private Boolean stale = false; // true nếu lấy từ bộ nhớ đệm khi provider lỗi
     private String source = "BINANCE"; // "BINANCE", "CACHE_BINANCE"
     private String fetchedAt;    // Thời điểm truy xuất ISO-8601
+    private String priceAsOf;    // Thời điểm của dữ liệu giá (date hoặc timestamp)
 
     public MarketPriceDto() {
     }
@@ -131,5 +132,13 @@ public class MarketPriceDto {
 
     public void setFetchedAt(String fetchedAt) {
         this.fetchedAt = fetchedAt;
+    }
+
+    public String getPriceAsOf() {
+        return priceAsOf != null ? priceAsOf : (lastUpdated != null ? lastUpdated : fetchedAt);
+    }
+
+    public void setPriceAsOf(String priceAsOf) {
+        this.priceAsOf = priceAsOf;
     }
 }

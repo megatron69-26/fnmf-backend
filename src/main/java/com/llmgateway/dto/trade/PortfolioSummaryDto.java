@@ -12,11 +12,16 @@ public class PortfolioSummaryDto {
     private BigDecimal totalPnL;           // Tổng lời/lỗ = NetWorth - InitialBalance
     private BigDecimal totalPnLPercent;    // % Lời/lỗ tổng tài khoản
     private List<HoldingDto> holdings;     // Danh sách các tài sản chi tiết
+    private Boolean fullyValued = true;    // Đánh dấu portfolio có được định giá đầy đủ hay không
 
     public PortfolioSummaryDto() {
     }
 
     public PortfolioSummaryDto(BigDecimal cashBalanceUsd, BigDecimal initialBalanceUsd, BigDecimal totalHoldingsValue, BigDecimal totalNetWorth, BigDecimal totalPnL, BigDecimal totalPnLPercent, List<HoldingDto> holdings) {
+        this(cashBalanceUsd, initialBalanceUsd, totalHoldingsValue, totalNetWorth, totalPnL, totalPnLPercent, holdings, true);
+    }
+
+    public PortfolioSummaryDto(BigDecimal cashBalanceUsd, BigDecimal initialBalanceUsd, BigDecimal totalHoldingsValue, BigDecimal totalNetWorth, BigDecimal totalPnL, BigDecimal totalPnLPercent, List<HoldingDto> holdings, Boolean fullyValued) {
         this.cashBalanceUsd = cashBalanceUsd;
         this.initialBalanceUsd = initialBalanceUsd;
         this.totalHoldingsValue = totalHoldingsValue;
@@ -24,6 +29,7 @@ public class PortfolioSummaryDto {
         this.totalPnL = totalPnL;
         this.totalPnLPercent = totalPnLPercent;
         this.holdings = holdings;
+        this.fullyValued = fullyValued != null ? fullyValued : true;
     }
 
     public BigDecimal getCashBalanceUsd() {
@@ -80,5 +86,17 @@ public class PortfolioSummaryDto {
 
     public void setHoldings(List<HoldingDto> holdings) {
         this.holdings = holdings;
+    }
+
+    public Boolean isFullyValued() {
+        return fullyValued;
+    }
+
+    public Boolean getFullyValued() {
+        return fullyValued;
+    }
+
+    public void setFullyValued(Boolean fullyValued) {
+        this.fullyValued = fullyValued;
     }
 }

@@ -24,6 +24,15 @@ public class MarketController {
     }
 
     /**
+     * GET /api/market/stocks
+     * Đọc danh sách 8 mã cổ phiếu gồm symbol và tên doanh nghiệp (alias cho /api/stocks).
+     */
+    @GetMapping("/stocks")
+    public ResponseEntity<List<com.llmgateway.dto.stock.StockCatalogDto>> getStockCatalog() {
+        return ResponseEntity.ok(com.llmgateway.config.MarketSymbolConfig.getStockCatalog());
+    }
+
+    /**
      * GET /api/market/prices
      * Lấy giá thời gian thực của tất cả các tài sản chính (Bitcoin, Vàng XAUUSD, Dầu USOIL, Ethereum).
      */

@@ -38,18 +38,22 @@ public class MarketSymbolAndTradeIntegrityTest {
     @Test
     @DisplayName("MarketSymbolConfig chỉ hỗ trợ BTCUSDT, ETHUSDT, XAUUSD và từ chối USOIL")
     public void testMarketSymbolConfig_whitelistAndRejections() {
-        // Hợp lệ
+        // Hợp lệ (Crypto, Commodity & 8 Cổ phiếu Mỹ)
         assertTrue(MarketSymbolConfig.isSupported("BTCUSDT"));
         assertTrue(MarketSymbolConfig.isSupported("ETHUSDT"));
         assertTrue(MarketSymbolConfig.isSupported("XAUUSD"));
         assertTrue(MarketSymbolConfig.isSupported("BTC/USDT"));
         assertTrue(MarketSymbolConfig.isSupported("btcusdt"));
+        assertTrue(MarketSymbolConfig.isSupported("AAPL"));
+        assertTrue(MarketSymbolConfig.isSupported("aapl"));
+        assertTrue(MarketSymbolConfig.isSupported("NVDA"));
+        assertTrue(MarketSymbolConfig.isSupported("MSFT"));
 
-        // Không hỗ trợ: USOIL, SPX, AAPL
+        // Không hỗ trợ: USOIL, WTI, SPX, XYZ
         assertFalse(MarketSymbolConfig.isSupported("USOIL"));
         assertFalse(MarketSymbolConfig.isSupported("WTI"));
         assertFalse(MarketSymbolConfig.isSupported("SPX"));
-        assertFalse(MarketSymbolConfig.isSupported("AAPL"));
+        assertFalse(MarketSymbolConfig.isSupported("XYZ"));
 
         // Validate ném ngoại lệ đúng
         assertThrows(UnsupportedSymbolException.class, () -> MarketSymbolConfig.validateSupported("USOIL"));

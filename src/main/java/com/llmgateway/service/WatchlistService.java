@@ -29,42 +29,109 @@ public class WatchlistService {
     private final ForecastService forecastService;
     private final AiNewsService aiNewsService;
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private StockMarketService stockMarketService;
+
     public WatchlistService(WatchlistRepository watchlistRepository,
                             MarketDataService marketDataService,
                             ForecastService forecastService,
                             AiNewsService aiNewsService) {
+        this(watchlistRepository, marketDataService, forecastService, aiNewsService, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public WatchlistService(WatchlistRepository watchlistRepository,
+                            MarketDataService marketDataService,
+                            ForecastService forecastService,
+                            AiNewsService aiNewsService,
+                            @org.springframework.beans.factory.annotation.Autowired(required = false) StockMarketService stockMarketService) {
         this.watchlistRepository = watchlistRepository;
         this.marketDataService = marketDataService;
         this.forecastService = forecastService;
         this.aiNewsService = aiNewsService;
+        this.stockMarketService = stockMarketService;
+    }
+
+    public void setStockMarketService(StockMarketService stockMarketService) {
+        this.stockMarketService = stockMarketService;
     }
 
     /**
      * Lấy danh sách watchlist của User từ PostgreSQL.
+     * Đối với cổ phiếu: Đọc từ cache sẵn có, không tự động gọi hàng loạt request ra ngoài.
+     * Nếu một mã cổ phiếu chưa có trong cache, trả thông tin cơ bản kèm giá/khuyến nghị/bài báo null,
+     * không làm hỏng toàn bộ danh sách.
      * Khi provider giá lỗi, price và change24h trả null (tuyệt đối không trả 0.0 giả).
-     * Tất cả các mã đã lưu trong DB đều được trả về đầy đủ.
      */
     public List<WatchlistItemDto> getUserWatchlist(Long userId) {
         List<Watchlist> items = watchlistRepository.findByUserIdOrderByDisplayOrderAsc(userId);
         List<WatchlistItemDto> result = new ArrayList<>();
 
         for (Watchlist w : items) {
-            MarketPriceDto priceDto = null;
-            try {
-                priceDto = marketDataService.getPriceBySymbol(w.getSymbol());
-            } catch (Exception e) {
-                log.warn("Không thể nạp giá cho mã trong watchlist: {} ({})", w.getSymbol(), e.getMessage());
+            String symbol = w.getSymbol();
+            if (com.llmgateway.config.MarketSymbolConfig.isStock(symbol)) {
+                StockMarketService.CachedStockData cached = (stockMarketService != null)
+                        ? stockMarketService.getCachedStock(symbol)
+                        : null;
+                String name = com.llmgateway.config.MarketSymbolConfig.isSupported(symbol)
+                        ? com.llmgateway.config.MarketSymbolConfig.getDisplayName(symbol)
+                        : symbol;
+                if (cached != null) {
+                    result.add(new WatchlistItemDto(
+                            w.getId(),
+                            cached.getSymbol(),
+                            cached.getName(),
+                            "STOCK",
+                            cached.getCurrentPrice(),
+                            cached.getChange24h(),
+                            w.getDisplayOrder(),
+                            w.getCreatedAt(),
+                            cached.getPriceAsOf(),
+                            cached.isStale(),
+                            cached.getRecommendation(),
+                            cached.getLatestReportTitle(),
+                            cached.getLatestReportUrl()
+                    ));
+                } else {
+                    result.add(new WatchlistItemDto(
+                            w.getId(),
+                            symbol,
+                            name,
+                            "STOCK",
+                            null,
+                            null,
+                            w.getDisplayOrder(),
+                            w.getCreatedAt(),
+                            null,
+                            false,
+                            null,
+                            null,
+                            null
+                    ));
+                }
+            } else {
+                MarketPriceDto priceDto = null;
+                try {
+                    priceDto = marketDataService.getPriceBySymbol(symbol);
+                } catch (Exception e) {
+                    log.warn("Không thể nạp giá cho mã trong watchlist: {} ({})", symbol, e.getMessage());
+                }
+                result.add(new WatchlistItemDto(
+                        w.getId(),
+                        symbol,
+                        priceDto != null && priceDto.getName() != null ? priceDto.getName() : symbol,
+                        priceDto != null && priceDto.getCategory() != null ? priceDto.getCategory() : "MARKET",
+                        priceDto != null ? priceDto.getPrice() : null,
+                        priceDto != null ? priceDto.getChange24h() : null,
+                        w.getDisplayOrder(),
+                        w.getCreatedAt(),
+                        priceDto != null ? priceDto.getPriceAsOf() : null,
+                        priceDto != null && Boolean.TRUE.equals(priceDto.getStale()),
+                        null,
+                        null,
+                        null
+                ));
             }
-            result.add(new WatchlistItemDto(
-                    w.getId(),
-                    w.getSymbol(),
-                    priceDto != null && priceDto.getName() != null ? priceDto.getName() : w.getSymbol(),
-                    priceDto != null && priceDto.getCategory() != null ? priceDto.getCategory() : "MARKET",
-                    priceDto != null ? priceDto.getPrice() : null,
-                    priceDto != null ? priceDto.getChange24h() : null,
-                    w.getDisplayOrder(),
-                    w.getCreatedAt()
-            ));
         }
 
         return result;
@@ -122,6 +189,7 @@ public class WatchlistService {
 
     /**
      * Thêm một mã tài sản vào danh sách theo dõi.
+     * Khi người dùng bấm Quan tâm một mã cổ phiếu, hệ thống nạp dữ liệu cho mã đó và đưa vào cache.
      * Vẫn lưu thành công dù giá thời gian thực tạm thời lỗi.
      */
     @Transactional
@@ -143,6 +211,33 @@ public class WatchlistService {
         watchlistRepository.save(watchlist);
         log.info("THÊM WATCHLIST THÀNH CÔNG | userId={} | symbol={}", userId, cleanSymbol);
 
+        if (com.llmgateway.config.MarketSymbolConfig.isStock(cleanSymbol)) {
+            StockMarketService.CachedStockData stockData = null;
+            if (stockMarketService != null) {
+                try {
+                    stockData = stockMarketService.fetchAndCacheStock(cleanSymbol);
+                } catch (Exception e) {
+                    log.warn("Không thể nạp dữ liệu cổ phiếu khi thêm watchlist cho {}: {}", cleanSymbol, e.getMessage());
+                }
+            }
+            String name = (stockData != null) ? stockData.getName() : com.llmgateway.config.MarketSymbolConfig.getDisplayName(cleanSymbol);
+            return new WatchlistItemDto(
+                    watchlist.getId(),
+                    cleanSymbol,
+                    name,
+                    "STOCK",
+                    stockData != null ? stockData.getCurrentPrice() : null,
+                    stockData != null ? stockData.getChange24h() : null,
+                    watchlist.getDisplayOrder(),
+                    watchlist.getCreatedAt(),
+                    stockData != null ? stockData.getPriceAsOf() : null,
+                    stockData != null && stockData.isStale(),
+                    stockData != null ? stockData.getRecommendation() : null,
+                    stockData != null ? stockData.getLatestReportTitle() : null,
+                    stockData != null ? stockData.getLatestReportUrl() : null
+            );
+        }
+
         MarketPriceDto priceDto = null;
         try {
             priceDto = marketDataService.getPriceBySymbol(cleanSymbol);
@@ -158,7 +253,12 @@ public class WatchlistService {
                 priceDto != null ? priceDto.getPrice() : null,
                 priceDto != null ? priceDto.getChange24h() : null,
                 watchlist.getDisplayOrder(),
-                watchlist.getCreatedAt()
+                watchlist.getCreatedAt(),
+                priceDto != null ? priceDto.getPriceAsOf() : null,
+                priceDto != null && Boolean.TRUE.equals(priceDto.getStale()),
+                null,
+                null,
+                null
         );
     }
 

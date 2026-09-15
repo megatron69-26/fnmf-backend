@@ -82,15 +82,16 @@ public class TradeService {
             throw new IllegalArgumentException("clientOrderId không hợp lệ (chỉ chấp nhận ký tự chữ cái, số, gạch nối và gạch dưới tối đa 64 ký tự)!");
         }
 
-        // 2. Kiểm tra giá thị trường thời gian thực (chống giá cũ / stale)
+        MarketSymbolConfig.validateSupported(request.getSymbol());
+        String canonicalSymbol = MarketSymbolConfig.getCanonicalSymbol(request.getSymbol());
+
+        // 2. Kiểm tra giá thị trường thời gian thực (từ chối mọi MarketPriceDto có stale=true, kể cả cổ phiếu)
         if (priceDto == null || priceDto.getPrice() == null || priceDto.getPrice().compareTo(BigDecimal.ZERO) <= 0
                 || Boolean.TRUE.equals(priceDto.getStale())) {
             throw new MarketDataUnavailableException(
                     "Dữ liệu thị trường thời gian thực không khả dụng để khớp lệnh (giá cũ/stale hoặc mất kết nối nhà cung cấp)!");
         }
 
-        MarketSymbolConfig.validateSupported(request.getSymbol());
-        String canonicalSymbol = MarketSymbolConfig.getCanonicalSymbol(request.getSymbol());
         String orderType = request.getType().trim().toUpperCase();
         BigDecimal quantity = request.getQuantity();
         if (quantity == null || quantity.compareTo(BigDecimal.ZERO) <= 0) {
@@ -145,23 +146,40 @@ public class TradeService {
         List<Holding> holdings = holdingRepository.findByWalletId(wallet.getId());
         List<HoldingDto> holdingDtos = new ArrayList<>();
         BigDecimal totalHoldingsValue = BigDecimal.ZERO;
+        boolean allHoldingsValued = true;
 
         for (Holding h : holdings) {
             String sym = h.getSymbol();
             String displayName = MarketSymbolConfig.getDisplayName(sym);
-            MarketPriceDto priceDto = marketDataService.getPriceBySymbol(sym);
-            BigDecimal currentPrice = (priceDto != null && priceDto.getPrice() != null)
-                    ? priceDto.getPrice()
-                    : h.getAvgBuyPrice();
+            MarketPriceDto priceDto = null;
+            try {
+                priceDto = marketDataService.getPriceBySymbol(sym);
+            } catch (Exception e) {
+                log.warn("Không thể lấy giá thị trường cho holding {}: {}", sym, e.getClass().getSimpleName());
+            }
 
             BigDecimal investedAmount = h.getQuantity().multiply(h.getAvgBuyPrice()).setScale(2, RoundingMode.HALF_UP);
-            BigDecimal currentValue = h.getQuantity().multiply(currentPrice).setScale(2, RoundingMode.HALF_UP);
-            BigDecimal profitLoss = currentValue.subtract(investedAmount).setScale(2, RoundingMode.HALF_UP);
-            BigDecimal profitLossPct = investedAmount.compareTo(BigDecimal.ZERO) > 0
-                    ? profitLoss.divide(investedAmount, 4, RoundingMode.HALF_UP).multiply(new BigDecimal("100")).setScale(2, RoundingMode.HALF_UP)
-                    : BigDecimal.ZERO;
+            BigDecimal currentPrice = (priceDto != null && priceDto.getPrice() != null && priceDto.getPrice().compareTo(BigDecimal.ZERO) > 0)
+                    ? priceDto.getPrice()
+                    : null;
 
-            totalHoldingsValue = totalHoldingsValue.add(currentValue);
+            BigDecimal currentValue = null;
+            BigDecimal profitLoss = null;
+            BigDecimal profitLossPct = null;
+
+            if (currentPrice != null) {
+                currentValue = h.getQuantity().multiply(currentPrice).setScale(2, RoundingMode.HALF_UP);
+                profitLoss = currentValue.subtract(investedAmount).setScale(2, RoundingMode.HALF_UP);
+                profitLossPct = investedAmount.compareTo(BigDecimal.ZERO) > 0
+                        ? profitLoss.divide(investedAmount, 4, RoundingMode.HALF_UP).multiply(new BigDecimal("100")).setScale(2, RoundingMode.HALF_UP)
+                        : BigDecimal.ZERO;
+                if (totalHoldingsValue != null) {
+                    totalHoldingsValue = totalHoldingsValue.add(currentValue);
+                }
+            } else {
+                allHoldingsValued = false;
+                totalHoldingsValue = null;
+            }
 
             holdingDtos.add(new HoldingDto(
                     h.getId(),
@@ -180,11 +198,17 @@ public class TradeService {
 
         BigDecimal cashBalance = wallet.getBalanceUsd();
         BigDecimal initialBalance = wallet.getInitialBalance() != null ? wallet.getInitialBalance() : new BigDecimal("10000.00");
-        BigDecimal totalNetWorth = cashBalance.add(totalHoldingsValue).setScale(2, RoundingMode.HALF_UP);
-        BigDecimal totalProfitLoss = totalNetWorth.subtract(initialBalance).setScale(2, RoundingMode.HALF_UP);
-        BigDecimal totalProfitLossPct = initialBalance.compareTo(BigDecimal.ZERO) > 0
-                ? totalProfitLoss.divide(initialBalance, 4, RoundingMode.HALF_UP).multiply(new BigDecimal("100")).setScale(2, RoundingMode.HALF_UP)
-                : BigDecimal.ZERO;
+        BigDecimal totalNetWorth = null;
+        BigDecimal totalProfitLoss = null;
+        BigDecimal totalProfitLossPct = null;
+
+        if (allHoldingsValued && totalHoldingsValue != null) {
+            totalNetWorth = cashBalance.add(totalHoldingsValue).setScale(2, RoundingMode.HALF_UP);
+            totalProfitLoss = totalNetWorth.subtract(initialBalance).setScale(2, RoundingMode.HALF_UP);
+            totalProfitLossPct = initialBalance.compareTo(BigDecimal.ZERO) > 0
+                    ? totalProfitLoss.divide(initialBalance, 4, RoundingMode.HALF_UP).multiply(new BigDecimal("100")).setScale(2, RoundingMode.HALF_UP)
+                    : BigDecimal.ZERO;
+        }
 
         return new PortfolioSummaryDto(
                 cashBalance,
@@ -193,7 +217,8 @@ public class TradeService {
                 totalNetWorth,
                 totalProfitLoss,
                 totalProfitLossPct,
-                holdingDtos
+                holdingDtos,
+                allHoldingsValued
         );
     }
 

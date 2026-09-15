@@ -44,6 +44,9 @@ public class MarketDataService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private AiNewsService aiNewsService;
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private StockMarketService stockMarketService;
+
     // ====================================================================================
     // 🛡️ BỘ NHỚ ĐỆM (IN-MEMORY CACHE) THỜI GIAN THỰC (ZERO FAKE DATA)
     // ------------------------------------------------------------------------------------
@@ -59,8 +62,16 @@ public class MarketDataService {
     private static final long NEWS_CACHE_TTL_MS = 120_000; // 2 phút
 
     public MarketDataService(ObjectMapper objectMapper, BinanceMarketClient binanceMarketClient) {
+        this(objectMapper, binanceMarketClient, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public MarketDataService(ObjectMapper objectMapper,
+                             BinanceMarketClient binanceMarketClient,
+                             @org.springframework.beans.factory.annotation.Autowired(required = false) StockMarketService stockMarketService) {
         this.objectMapper = objectMapper;
         this.binanceMarketClient = binanceMarketClient;
+        this.stockMarketService = stockMarketService;
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
                 .build();
@@ -71,17 +82,19 @@ public class MarketDataService {
      * Một symbol lỗi không được làm mất các symbol còn hoạt động.
      * /api/market/prices trả danh sách các symbol lấy thành công.
      * Chỉ trả 503 khi toàn bộ provider đều lỗi và không có cache thật nào khả dụng.
+     * Không tự động quét 8 mã cổ phiếu khi gọi getAllPrices.
      */
     public List<MarketPriceDto> getAllPrices() {
         long now = System.currentTimeMillis();
+        List<MarketSymbolConfig.SymbolMeta> standardSymbols = MarketSymbolConfig.getCryptoAndCommoditySymbols();
 
-        if (now - lastPriceFetchTime < PRICE_CACHE_TTL_MS && priceCache.size() >= MarketSymbolConfig.getAllCanonical().size()) {
+        if (now - lastPriceFetchTime < PRICE_CACHE_TTL_MS && priceCache.size() >= standardSymbols.size()) {
             return new ArrayList<>(priceCache.values());
         }
 
         List<MarketPriceDto> results = new ArrayList<>();
 
-        for (MarketSymbolConfig.SymbolMeta meta : MarketSymbolConfig.getAllCanonical()) {
+        for (MarketSymbolConfig.SymbolMeta meta : standardSymbols) {
             try {
                 MarketPriceDto dto = fetchOrCachePrice(meta);
                 if (dto != null) {
@@ -105,12 +118,21 @@ public class MarketDataService {
 
     /**
      * Lấy giá 1 mã tài sản cụ thể.
+     * Đối với 8 mã cổ phiếu Mỹ, điều hướng sang StockMarketService (Alpha Vantage + cache 24h).
      * Ném UnsupportedSymbolException (HTTP 422) nếu mã không được hỗ trợ (hoặc USOIL).
      * Ném MarketDataUnavailableException (HTTP 503) nếu không lấy được giá và chưa có cache thật.
      */
     public MarketPriceDto getPriceBySymbol(String symbol) {
         MarketSymbolConfig.validateSupported(symbol);
         String canonicalSymbol = MarketSymbolConfig.getCanonicalSymbol(symbol);
+
+        if (MarketSymbolConfig.isStock(canonicalSymbol)) {
+            if (stockMarketService != null) {
+                return stockMarketService.getStockPrice(canonicalSymbol);
+            }
+            throw new MarketDataUnavailableException("Dịch vụ cổ phiếu chưa sẵn sàng cho mã: " + canonicalSymbol);
+        }
+
         MarketSymbolConfig.SymbolMeta meta = MarketSymbolConfig.getMeta(canonicalSymbol);
 
         long now = System.currentTimeMillis();
@@ -127,7 +149,9 @@ public class MarketDataService {
     }
 
     /**
-     * Lấy chuỗi nến OHLC thật từ Binance cho biểu đồ.
+     * Lấy chuỗi nến OHLC thật cho biểu đồ.
+     * Đối với Crypto & Commodity: dùng Binance.
+     * Đối với 8 mã cổ phiếu: dùng Alpha Vantage / Cache 24h qua StockMarketService.
      * Ném UnsupportedSymbolException (HTTP 422) nếu mã không hỗ trợ.
      * Ném MarketDataUnavailableException (HTTP 503) nếu provider lỗi và không có cache nến thật.
      * Tuyệt đối KHÔNG sinh nến giả (zero-fake).
@@ -135,6 +159,14 @@ public class MarketDataService {
     public List<CandleDto> getCandles(String symbol, String interval) {
         MarketSymbolConfig.validateSupported(symbol);
         String canonicalSymbol = MarketSymbolConfig.getCanonicalSymbol(symbol);
+
+        if (MarketSymbolConfig.isStock(canonicalSymbol)) {
+            if (stockMarketService != null) {
+                return stockMarketService.getStockCandles(canonicalSymbol);
+            }
+            throw new MarketDataUnavailableException("Dịch vụ nến cổ phiếu chưa sẵn sàng cho mã: " + canonicalSymbol);
+        }
+
         MarketSymbolConfig.SymbolMeta meta = MarketSymbolConfig.getMeta(canonicalSymbol);
 
         String cacheKey = canonicalSymbol + "_" + (interval != null ? interval.toLowerCase() : "daily");
@@ -172,6 +204,14 @@ public class MarketDataService {
 
     public void setAiNewsService(AiNewsService aiNewsService) {
         this.aiNewsService = aiNewsService;
+    }
+
+    public void setStockMarketService(StockMarketService stockMarketService) {
+        this.stockMarketService = stockMarketService;
+    }
+
+    public StockMarketService getStockMarketService() {
+        return stockMarketService;
     }
 
     // =========================================================================
