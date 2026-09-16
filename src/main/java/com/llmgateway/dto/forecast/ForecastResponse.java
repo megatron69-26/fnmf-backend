@@ -19,6 +19,7 @@ public class ForecastResponse {
     private String technicalOutlook;    // Nhận định kỹ thuật (Nến, đường giá)
     private String fundamentalOutlook;  // Nhận định tin tức vĩ mô (FED, lạm phát, tin tức)
     private String analysisSource;      // "GEMINI"
+    private String aiShard;             // "GEMINI_SHARD_1", "GEMINI_SHARD_2", "GEMINI_SHARD_3"
     private Integer candleCount;        // Số nến thực tế đưa vào phân tích
     private boolean fromCache;          // true nếu lấy từ database cache
     private LocalDateTime createdAt;
@@ -221,6 +222,14 @@ public class ForecastResponse {
 
     public void setQuotaDate(String quotaDate) {
         this.quotaDate = quotaDate;
+    }
+
+    public String getAiShard() {
+        return aiShard;
+    }
+
+    public void setAiShard(String aiShard) {
+        this.aiShard = aiShard;
     }
 
     public void applyQuota(com.llmgateway.dto.quota.RefreshQuotaDto quota) {

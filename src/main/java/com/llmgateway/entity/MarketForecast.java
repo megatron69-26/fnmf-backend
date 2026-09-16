@@ -54,6 +54,9 @@ public class MarketForecast {
     @Column(name = "analysis_source", length = 50)
     private String analysisSource;
 
+    @Column(name = "ai_shard", length = 50)
+    private String aiShard;
+
     @Column(name = "candle_count")
     private Integer candleCount;
 
@@ -202,5 +205,13 @@ public class MarketForecast {
 
     public void setCandleCount(Integer candleCount) {
         this.candleCount = candleCount;
+    }
+
+    public String getAiShard() {
+        return aiShard;
+    }
+
+    public void setAiShard(String aiShard) {
+        this.aiShard = aiShard;
     }
 }

@@ -30,10 +30,19 @@ public class ForecastCacheService {
 
     private final MarketForecastRepository forecastRepository;
     private final ObjectMapper objectMapper;
+    private final com.llmgateway.service.provider.GeminiShardRouter geminiShardRouter;
 
     public ForecastCacheService(MarketForecastRepository forecastRepository, ObjectMapper objectMapper) {
+        this(forecastRepository, objectMapper, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public ForecastCacheService(MarketForecastRepository forecastRepository,
+                                ObjectMapper objectMapper,
+                                @org.springframework.beans.factory.annotation.Autowired(required = false) com.llmgateway.service.provider.GeminiShardRouter geminiShardRouter) {
         this.forecastRepository = forecastRepository;
         this.objectMapper = objectMapper;
+        this.geminiShardRouter = geminiShardRouter;
     }
 
     /**
@@ -89,6 +98,15 @@ public class ForecastCacheService {
                 cached.getCreatedAt()
         );
 
+        String shard = cached.getAiShard();
+        if ((shard == null || shard.isBlank()) && geminiShardRouter != null) {
+            try {
+                shard = geminiShardRouter.resolveShardName(cleanSymbol);
+            } catch (Exception ignored) {
+            }
+        }
+        response.setAiShard(shard);
+
         // Mọi bản ghi cache phải qua kiểm định chất lượng khắt khe trước khi trả về
         try {
             ForecastQualityPolicy.validateOrThrow(response);
@@ -128,6 +146,7 @@ public class ForecastCacheService {
                     REQUIRED_SOURCE,
                     response.getCandleCount()
             );
+            entity.setAiShard(response.getAiShard());
 
             forecastRepository.save(entity);
             log.info("ĐÃ LƯU DỰ BÁO AI MỚI VÀO CSDL | symbol={} | recommendation={}", response.getSymbol(), response.getRecommendation());

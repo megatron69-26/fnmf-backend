@@ -3,6 +3,7 @@ package com.llmgateway;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.llmgateway.controller.WatchlistController;
 import com.llmgateway.dto.forecast.ForecastRequest;
+import com.llmgateway.dto.market.CandleDto;
 import com.llmgateway.dto.market.MarketPriceDto;
 import com.llmgateway.dto.watchlist.WatchlistItemDto;
 import com.llmgateway.entity.Watchlist;
@@ -449,7 +450,7 @@ public class MarketProviderFailoverAndSecurityTest {
     }
 
     @Test
-    @DisplayName("MarketDataService.getCandles: Cổ phiếu chỉ hỗ trợ daily, từ chối random và 1m trước khi gọi StockMarketService")
+    @DisplayName("MarketDataService.getCandles: Cổ phiếu chỉ hỗ trợ daily/1d và 1m, từ chối random và 5m trước khi gọi StockMarketService")
     public void testStockCandles_rejectNonDailyIntervalsBeforeCallingProvider() {
         com.llmgateway.service.StockMarketService mockStockService = mock(com.llmgateway.service.StockMarketService.class);
         BinanceMarketClient mockBinance = mock(BinanceMarketClient.class);
@@ -462,15 +463,18 @@ public class MarketProviderFailoverAndSecurityTest {
         );
         assertTrue(exRandom.getMessage().contains("Khoảng thời gian không hợp lệ"));
 
-        // 2. Cổ phiếu với interval="1m" -> ném IllegalArgumentException
-        IllegalArgumentException ex1m = assertThrows(
+        // 2. Cổ phiếu với interval="5m" -> ném IllegalArgumentException
+        IllegalArgumentException ex5m = assertThrows(
                 IllegalArgumentException.class,
-                () -> service.getCandles("AAPL", "1m")
+                () -> service.getCandles("AAPL", "5m")
         );
-        assertTrue(ex1m.getMessage().contains("Cổ phiếu chỉ hỗ trợ khung thời gian daily"));
+        assertTrue(ex5m.getMessage().contains("Khoảng thời gian không hợp lệ"));
 
-        // Xác minh StockMarketService tuyệt đối KHÔNG bị gọi khi interval sai
-        verify(mockStockService, never()).getStockCandles(anyString());
+        // 3. Cổ phiếu với interval="1m" -> được chấp nhận và gọi mockStockService
+        when(mockStockService.getStockCandles("AAPL", "1m")).thenReturn(List.of());
+        List<CandleDto> candles1m = service.getCandles("AAPL", "1m");
+        assertNotNull(candles1m);
+        verify(mockStockService, times(1)).getStockCandles("AAPL", "1m");
         verifyNoInteractions(mockBinance);
     }
 }

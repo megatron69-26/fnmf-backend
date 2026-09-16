@@ -46,10 +46,13 @@ public class GeminiForecastClient {
     private String geminiApiKey;
 
     @Value("${openai.api.url:https://generativelanguage.googleapis.com/v1beta/openai/chat/completions}")
-    private String geminiApiUrl;
+    private String geminiApiUrl = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
 
     @Value("${openai.default-model:gemini-3.6-flash}")
-    private String geminiModel;
+    private String geminiModel = "gemini-3.6-flash";
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.llmgateway.service.provider.GeminiShardRouter geminiShardRouter;
 
     @org.springframework.beans.factory.annotation.Autowired
     public GeminiForecastClient(ObjectMapper objectMapper) {
@@ -61,14 +64,36 @@ public class GeminiForecastClient {
         this.httpClient = httpClient;
     }
 
+    public void setGeminiShardRouter(com.llmgateway.service.provider.GeminiShardRouter geminiShardRouter) {
+        this.geminiShardRouter = geminiShardRouter;
+    }
+
     public ForecastResponse requestForecast(String symbol,
                                            MarketPriceDto priceDto,
                                            List<CandleDto> candles,
                                            List<NewsAiCache> recentNews,
                                            String timeframe) {
-        if (geminiApiKey == null || geminiApiKey.isBlank()) {
-            log.warn("Gemini API key is not configured for market forecasting");
-            throw new ForecastUnavailableException("Chưa cấu hình dịch vụ AI phân tích thị trường");
+        String apiKey;
+        String shardName;
+        if (geminiShardRouter != null) {
+            try {
+                com.llmgateway.service.provider.GeminiShardRouter.GeminiShardInfo shard = geminiShardRouter.resolveShard(symbol);
+                apiKey = shard.apiKey();
+                shardName = shard.shardName();
+            } catch (ForecastUnavailableException fe) {
+                throw fe;
+            } catch (Exception e) {
+                log.warn("Lỗi định tuyến Gemini shard cho mã {}: {}", symbol, e.getClass().getSimpleName());
+                throw new ForecastUnavailableException("Chưa cấu hình dịch vụ AI phân tích thị trường cho mã: " + symbol, e);
+            }
+        } else {
+            apiKey = geminiApiKey;
+            shardName = "GEMINI";
+        }
+
+        if (apiKey == null || apiKey.isBlank() || apiKey.startsWith("${")) {
+            log.warn("Gemini API key is not configured for market forecasting for symbol {}", symbol);
+            throw new ForecastUnavailableException("Chưa cấu hình dịch vụ AI phân tích thị trường cho mã: " + symbol);
         }
 
         if (candles == null || candles.isEmpty()) {
@@ -162,7 +187,7 @@ public class GeminiForecastClient {
             HttpRequest httpRequest = HttpRequest.newBuilder()
                     .uri(URI.create(geminiApiUrl))
                     .header("Content-Type", "application/json; charset=utf-8")
-                    .header("Authorization", "Bearer " + geminiApiKey)
+                    .header("Authorization", "Bearer " + apiKey)
                     .timeout(REQUEST_TIMEOUT)
                     .POST(HttpRequest.BodyPublishers.ofString(payload))
                     .build();
@@ -265,6 +290,7 @@ public class GeminiForecastClient {
                     false,
                     LocalDateTime.now()
             );
+            forecastResponse.setAiShard(shardName);
 
             // Kiểm duyệt chất lượng khắt khe trước khi chấp nhận kết quả
             ForecastQualityPolicy.validateOrThrow(forecastResponse);

@@ -1,19 +1,26 @@
 package com.llmgateway.service;
 
+import com.llmgateway.config.MarketSymbolConfig;
 import com.llmgateway.dto.forecast.ForecastRequest;
 import com.llmgateway.dto.forecast.ForecastResponse;
 import com.llmgateway.dto.market.CandleDto;
 import com.llmgateway.dto.market.MarketPriceDto;
+import com.llmgateway.dto.market.NewsArticleDto;
 import com.llmgateway.entity.MarketForecast;
 import com.llmgateway.entity.NewsAiCache;
 import com.llmgateway.exception.ForecastUnavailableException;
 import com.llmgateway.exception.MarketDataUnavailableException;
 import com.llmgateway.repository.MarketForecastRepository;
 import com.llmgateway.repository.NewsAiCacheRepository;
+import com.llmgateway.service.provider.FixedMarketCacheManager;
+import com.llmgateway.service.provider.FixedMarketProviderRouter;
+import com.llmgateway.service.provider.MarketContentProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
@@ -27,6 +34,8 @@ public class ForecastService {
     private final MarketDataService marketDataService;
     private final ForecastCacheService forecastCacheService;
     private final GeminiForecastClient geminiForecastClient;
+    private final FixedMarketProviderRouter fixedMarketProviderRouter;
+    private final FixedMarketCacheManager fixedMarketCacheManager;
 
     public ForecastService(MarketForecastRepository forecastRepository,
                            NewsAiCacheRepository newsAiCacheRepository,
@@ -36,7 +45,23 @@ public class ForecastService {
              newsAiCacheRepository,
              marketDataService,
              new ForecastCacheService(forecastRepository, objectMapper),
-             new GeminiForecastClient(objectMapper));
+             new GeminiForecastClient(objectMapper),
+             null,
+             null);
+    }
+
+    public ForecastService(MarketForecastRepository forecastRepository,
+                           NewsAiCacheRepository newsAiCacheRepository,
+                           MarketDataService marketDataService,
+                           ForecastCacheService forecastCacheService,
+                           GeminiForecastClient geminiForecastClient) {
+        this(forecastRepository,
+             newsAiCacheRepository,
+             marketDataService,
+             forecastCacheService,
+             geminiForecastClient,
+             null,
+             null);
     }
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -44,19 +69,23 @@ public class ForecastService {
                            NewsAiCacheRepository newsAiCacheRepository,
                            MarketDataService marketDataService,
                            ForecastCacheService forecastCacheService,
-                           GeminiForecastClient geminiForecastClient) {
+                           GeminiForecastClient geminiForecastClient,
+                           @org.springframework.beans.factory.annotation.Autowired(required = false) FixedMarketProviderRouter fixedMarketProviderRouter,
+                           @org.springframework.beans.factory.annotation.Autowired(required = false) FixedMarketCacheManager fixedMarketCacheManager) {
         this.forecastRepository = forecastRepository;
         this.newsAiCacheRepository = newsAiCacheRepository;
         this.marketDataService = marketDataService;
         this.forecastCacheService = forecastCacheService;
         this.geminiForecastClient = geminiForecastClient;
+        this.fixedMarketProviderRouter = fixedMarketProviderRouter;
+        this.fixedMarketCacheManager = fixedMarketCacheManager;
     }
 
     /**
      * Tạo hoặc lấy bản dự báo thị trường AI dựa trên:
      * 1. Kiểm tra giá thị trường thời gian thực (Zero Fake / Zero Stale).
      * 2. Kiểm tra bộ nhớ đệm CSDL (15 phút) - chỉ chấp nhận nguồn GEMINI.
-     * 3. Thu thập nến thực tế (tối đa 30 cây nến) và tin tức vĩ mô.
+     * 3. Thu thập nến thực tế (tối đa 30 cây nến) và tin tức vĩ mô theo đúng symbol.
      * 4. Gọi Gemini AI và kiểm duyệt nghiêm ngặt theo ForecastQualityPolicy.
      * 5. Lưu vào CSDL và trả về kết quả.
      * Khi có lỗi mạng/AI/thiếu nến/không đạt chuẩn: ném ForecastUnavailableException (HTTP 503),
@@ -87,9 +116,9 @@ public class ForecastService {
             }
         }
 
-        // 3. Thu thập dữ liệu nến thực tế từ sàn & tin tức CSDL
+        // 3. Thu thập dữ liệu nến thực tế từ sàn & tin tức theo đúng symbol (Blocker 5: Zero cross-symbol news)
         List<CandleDto> candles = marketDataService.getCandles(cleanSymbol, "daily");
-        List<NewsAiCache> recentNews = newsAiCacheRepository.findTop10ByOrderByPublishedAtDesc();
+        List<NewsAiCache> recentNews = fetchNewsForSymbol(cleanSymbol);
 
         // 4. Phân tích qua Gemini AI với dữ liệu nến thực tế
         ForecastResponse response = geminiForecastClient.requestForecast(
@@ -109,6 +138,102 @@ public class ForecastService {
 
         response.setFromCache(false);
         return response;
+    }
+
+    /**
+     * Thu thập tối đa 3 tin tức CHÍNH XÁC của symbol được yêu cầu.
+     * Cấm dùng findTop10ByOrderByPublishedAtDesc() toàn bộ sàn.
+     * Cấm dùng tin tức của symbol khác.
+     */
+    public List<NewsAiCache> fetchNewsForSymbol(String cleanSymbol) {
+        if (cleanSymbol == null || cleanSymbol.isBlank()) {
+            return Collections.emptyList();
+        }
+
+        String canonical = MarketSymbolConfig.isSupported(cleanSymbol)
+                ? MarketSymbolConfig.getCanonicalSymbol(cleanSymbol)
+                : cleanSymbol.trim().toUpperCase();
+        List<NewsAiCache> result = new ArrayList<>();
+
+        if (MarketSymbolConfig.isSupported(cleanSymbol) && MarketSymbolConfig.isStock(canonical)) {
+            // Cổ phiếu: tra cứu qua FixedMarketCacheManager / FixedMarketProviderRouter
+            if (fixedMarketProviderRouter != null) {
+                try {
+                    MarketContentProvider provider = fixedMarketProviderRouter.getProvider(canonical);
+                    String providerName = provider.providerName();
+                    List<NewsArticleDto> providerNews = null;
+
+                    if (fixedMarketCacheManager != null) {
+                        FixedMarketCacheManager.CachedEntry<List<NewsArticleDto>> cachedNews = fixedMarketCacheManager.getNewsEntry(providerName, canonical);
+                        if (cachedNews != null && cachedNews.isFresh(FixedMarketCacheManager.NEWS_TTL_MS)) {
+                            providerNews = cachedNews.getData();
+                        }
+                    }
+
+                    if (providerNews == null) {
+                        providerNews = provider.getLatestNews(canonical, 3);
+                        if (providerNews == null) {
+                            providerNews = Collections.emptyList();
+                        }
+                        if (fixedMarketCacheManager != null) {
+                            fixedMarketCacheManager.putNews(providerName, canonical, providerNews);
+                        }
+                    }
+
+                    if (providerNews != null && !providerNews.isEmpty()) {
+                        for (NewsArticleDto art : providerNews) {
+                            if (result.size() >= 3) break;
+                            NewsAiCache item = new NewsAiCache();
+                            item.setSymbol(canonical);
+                            item.setTitle(art.title());
+                            item.setOriginalSummary(art.summary());
+                            item.setSentiment("NEUTRAL");
+                            item.setReason("Tin tức từ " + providerName);
+                            item.setArticleUrl(art.url());
+                            result.add(item);
+                        }
+                    }
+                } catch (Exception e) {
+                    log.debug("Không thể lấy tin tức từ provider cho cổ phiếu {}: {}", canonical, e.getClass().getSimpleName());
+                }
+            }
+
+            // Fallback tra cứu DB riêng cho canonical symbol nếu có
+            if (result.isEmpty() && newsAiCacheRepository != null) {
+                try {
+                    List<NewsAiCache> dbNews = newsAiCacheRepository.findBySymbolOrderByPublishedAtDesc(canonical);
+                    if (dbNews != null) {
+                        for (NewsAiCache item : dbNews) {
+                            if (canonical.equalsIgnoreCase(item.getSymbol())) {
+                                result.add(item);
+                                if (result.size() >= 3) break;
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    log.debug("Lỗi tra cứu tin tức CSDL cho {}: {}", canonical, e.getClass().getSimpleName());
+                }
+            }
+        } else {
+            // Crypto: tra cứu trong newsAiCacheRepository đúng cho canonical symbol
+            if (newsAiCacheRepository != null) {
+                try {
+                    List<NewsAiCache> dbNews = newsAiCacheRepository.findBySymbolOrderByPublishedAtDesc(canonical);
+                    if (dbNews != null) {
+                        for (NewsAiCache item : dbNews) {
+                            if (canonical.equalsIgnoreCase(item.getSymbol())) {
+                                result.add(item);
+                                if (result.size() >= 3) break;
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    log.debug("Lỗi tra cứu tin tức crypto cho {}: {}", canonical, e.getClass().getSimpleName());
+                }
+            }
+        }
+
+        return result;
     }
 
     public List<MarketForecast> getForecastHistory(String symbol) {

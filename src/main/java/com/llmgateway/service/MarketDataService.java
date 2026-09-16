@@ -177,11 +177,8 @@ public class MarketDataService {
         String normalizedInterval = normalizeInterval(interval);
 
         if (MarketSymbolConfig.isStock(canonicalSymbol)) {
-            if (!"daily".equals(normalizedInterval)) {
-                throw new IllegalArgumentException("Cổ phiếu chỉ hỗ trợ khung thời gian daily (ngày). Khung thời gian yêu cầu không hợp lệ: " + interval);
-            }
             if (stockMarketService != null) {
-                return stockMarketService.getStockCandles(canonicalSymbol);
+                return stockMarketService.getStockCandles(canonicalSymbol, normalizedInterval);
             }
             throw new MarketDataUnavailableException("Dịch vụ nến cổ phiếu chưa sẵn sàng cho mã: " + canonicalSymbol);
         }
