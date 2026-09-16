@@ -155,7 +155,7 @@ public class ForecastCacheService {
         }
     }
 
-    private List<String> parseKeyDrivers(String json) {
+    public List<String> parseKeyDrivers(String json) {
         if (json == null || json.isBlank()) {
             return List.of();
         }

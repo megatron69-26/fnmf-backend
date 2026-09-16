@@ -172,12 +172,13 @@ public class StockMarketService {
         if (fixedMarketProviderRouter == null) {
             return fetchAndCacheStockAlphaVantage(symbol);
         }
-        MarketSymbolConfig.validateSupported(symbol);
-        if (!MarketSymbolConfig.isStock(symbol)) {
-            throw new IllegalArgumentException("Mã " + symbol + " không phải là cổ phiếu");
-        }
         String canonical = MarketSymbolConfig.getCanonicalSymbol(symbol);
-        MarketSymbolConfig.SymbolMeta meta = MarketSymbolConfig.getMeta(canonical);
+        MarketSymbolConfig.SymbolMeta meta;
+        try {
+            meta = MarketSymbolConfig.getMeta(canonical);
+        } catch (Exception e) {
+            meta = new MarketSymbolConfig.SymbolMeta(canonical, MarketSymbolConfig.getDisplayName(canonical), "STOCK", null, "LEGACY");
+        }
         String normInterval = "1m".equalsIgnoreCase(interval) ? "1m" : "daily";
         String intervalKey = canonical + "#" + normInterval;
 
@@ -330,12 +331,13 @@ public class StockMarketService {
      * Tải và cache dữ liệu cổ phiếu thật cho đúng 1 mã yêu cầu dùng Alpha Vantage (chế độ test/legacy).
      */
     public synchronized CachedStockData fetchAndCacheStockAlphaVantage(String symbol) {
-        MarketSymbolConfig.validateSupported(symbol);
-        if (!MarketSymbolConfig.isStock(symbol)) {
-            throw new IllegalArgumentException("Mã " + symbol + " không phải là cổ phiếu");
-        }
         String canonical = MarketSymbolConfig.getCanonicalSymbol(symbol);
-        MarketSymbolConfig.SymbolMeta meta = MarketSymbolConfig.getMeta(canonical);
+        MarketSymbolConfig.SymbolMeta meta;
+        try {
+            meta = MarketSymbolConfig.getMeta(canonical);
+        } catch (Exception e) {
+            meta = new MarketSymbolConfig.SymbolMeta(canonical, MarketSymbolConfig.getDisplayName(canonical), "STOCK", null, "ALPHA_VANTAGE");
+        }
 
         long now = System.currentTimeMillis();
         CachedStockData existing = stockCache.get(canonical);

@@ -61,7 +61,8 @@ public class ForecastQualityPolicy {
     private static final Set<String> ALLOWED_FINANCIAL_TOKENS = Set.of(
             "btc", "eth", "usd", "usdt", "vnd", "etf", "rsi", "macd", "fed", "sec", "fomc",
             "gdp", "cpi", "dxy", "ema", "sma", "ohlcv", "nvidia", "apple", "microsoft", "tesla",
-            "binance", "coinbase", "bitcoin", "ethereum", "solana", "fnmf"
+            "binance", "coinbase", "bitcoin", "ethereum", "solana", "fnmf",
+            "bnb", "sol", "xrp", "ada", "doge", "cardano", "dogecoin"
     );
 
     private static final Set<String> COMMON_ENGLISH_WORDS = Set.of(

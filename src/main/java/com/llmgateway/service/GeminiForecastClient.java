@@ -172,13 +172,150 @@ public class GeminiForecastClient {
             }
         }
 
+        return callGeminiAndParse(systemPrompt, userPrompt.toString(), apiKey, shardName,
+                symbol, priceDto.getName() != null ? priceDto.getName() : symbol,
+                priceDto.getPrice(), inputCandles.size(), timeframe);
+    }
+
+    public ForecastResponse requestMarketForecast(List<MarketPriceDto> allPrices,
+                                                  List<CandleDto> benchmarkCandles,
+                                                  List<NewsAiCache> recentNews,
+                                                  String timeframe) {
+        String apiKey;
+        String shardName;
+        if (geminiShardRouter != null) {
+            try {
+                com.llmgateway.service.provider.GeminiShardRouter.GeminiShardInfo shard = geminiShardRouter.resolveShard("MARKET");
+                apiKey = shard.apiKey();
+                shardName = shard.shardName();
+            } catch (ForecastUnavailableException fe) {
+                throw fe;
+            } catch (Exception e) {
+                log.warn("Lỗi định tuyến Gemini shard cho MARKET: {}", e.getClass().getSimpleName());
+                throw new ForecastUnavailableException("Chưa cấu hình dịch vụ AI phân tích toàn thị trường", e);
+            }
+        } else {
+            apiKey = geminiApiKey;
+            shardName = "GEMINI";
+        }
+
+        if (apiKey == null || apiKey.isBlank() || apiKey.startsWith("${")) {
+            log.warn("Gemini API key is not configured for market forecasting");
+            throw new ForecastUnavailableException("Chưa cấu hình dịch vụ AI phân tích toàn thị trường");
+        }
+
+        if (benchmarkCandles == null || benchmarkCandles.isEmpty()) {
+            throw new ForecastUnavailableException("Không đủ dữ liệu nến thị trường thực tế để tạo nhận định");
+        }
+
+        int availableCandles = Math.min(benchmarkCandles.size(), MAX_CANDLES_INPUT);
+        List<CandleDto> inputCandles = benchmarkCandles.subList(benchmarkCandles.size() - availableCandles, benchmarkCandles.size());
+
+        BigDecimal benchmarkPrice = null;
+        if (allPrices != null) {
+            for (MarketPriceDto p : allPrices) {
+                if ("BTCUSDT".equalsIgnoreCase(p.getSymbol()) && p.getPrice() != null && p.getPrice().compareTo(BigDecimal.ZERO) > 0) {
+                    benchmarkPrice = p.getPrice();
+                    break;
+                }
+            }
+        }
+        if (benchmarkPrice == null) {
+            throw new ForecastUnavailableException("Không có dữ liệu giá BTC thực tế để làm mốc tham chiếu nhận định");
+        }
+
+        String systemPrompt = """
+            Bạn là Chuyên gia Chiến lược Đầu tư và Phân tích Định lượng Cấp cao của quỹ đầu tư FNMF.
+            Nhiệm vụ: Phân tích TỔNG THỂ TOÀN BỘ THỊ TRƯỜNG dựa trên 8 tài sản chính (BTC, ETH, XAU/PAXG, BNB, SOL, XRP, ADA, DOGE), chuỗi nến thực tế và tin tức vĩ mô thị trường để đưa ra nhận định xu hướng chung của thị trường.
+
+            QUY TẮC BẮT BUỘC:
+            1. Ước lượng vùng giá Support (ngưỡng hỗ trợ) và Resistance (ngưỡng kháng cự) thị trường tham chiếu theo chỉ số/mã dẫn dắt BTC (> 0 và Support <= Resistance).
+            2. Xác định Xu hướng toàn thị trường: BULLISH_UPTREND, BEARISH_DOWNTREND, hoặc SIDEWAYS_CONSOLIDATION.
+            3. Khuyến nghị phân bổ danh mục: STRONG_BUY, BUY, HOLD, SELL, hoặc STRONG_SELL.
+            4. Chỉ số độ tin cậy confidenceScore bắt buộc là một số nguyên từ 0 đến 100.
+            5. Toàn bộ nội dung gửi ra UI (keyDrivers, technicalOutlook, fundamentalOutlook) PHẢI VIẾT THUẦN TIẾNG VIỆT CHUYÊN NGHIỆP:
+               - TUYỆT ĐỐI KHÔNG DÙNG CÁC TỪ TIẾNG ANH CHƯA DỊCH: 'bullish', 'bearish', 'sideways', 'support', 'resistance', 'long', 'short', 'volume', 'outlook', 'sentiment', 'forecast', 'action plan'.
+               - BẮT BUỘC DÙNG THUẬT NGỮ TIẾNG VIỆT TƯƠNG ỨNG: 'xu hướng tăng', 'xu hướng giảm', 'đi ngang', 'hỗ trợ', 'kháng cự', 'vị thế mua', 'vị thế bán', 'khối lượng', 'nhận định', 'tâm lý thị trường', 'kịch bản tham khảo'.
+               - Chỉ giữ nguyên các mã ticker, tên riêng và từ viết tắt nghiệp vụ thực sự cần thiết (BTC, ETH, USD, USDT, VND, ETF, RSI, MACD, FED, SEC, FOMC, GDP, CPI, DXY, EMA, SMA, OHLCV, Binance, Bitcoin, Ethereum, Solana, BNB, XRP, ADA, DOGE, FNMF).
+            6. QUY ĐỊNH ĐỘ DÀI VÀ NGẮN GỌN (BẮT BUỘC):
+               - technicalOutlook: đúng 1 câu tiếng Việt, tối đa 140 ký tự.
+               - fundamentalOutlook: đúng 1 câu tiếng Việt, tối đa 140 ký tự.
+               - keyDrivers: đúng 3 ý; mỗi ý là 1 câu tiếng Việt, tối đa 85 ký tự.
+               - Tuyệt đối không xuống dòng (không dùng ký tự \\n hoặc ngắt dòng) bên trong từng chuỗi văn bản.
+               - Không lặp lại giá hiện tại, ngưỡng hỗ trợ và kháng cự ở nhiều phần.
+               - Chỉ giữ thông tin quan trọng nhất, súc tích, không diễn giải dài dòng.
+               - Tuyệt đối không dùng Markdown (in đậm, in nghiêng, gạch đầu dòng -, *, •) bên trong nội dung chuỗi JSON.
+
+            VÍ DỤ PHONG CÁCH MONG MUỐN:
+            technicalOutlook: "Toàn thị trường đang giữ vững trên vùng hỗ trợ chủ chốt với dòng tiền ổn định."
+            fundamentalOutlook: "Tâm lý nhà đầu tư tích cực và không có tin tức vĩ mô bất lợi trong ngắn hạn."
+            keyDrivers: [
+              "Dòng tiền tập trung vào các tài sản vốn hóa lớn.",
+              "Khối lượng giao dịch duy trì ở mức cao trên toàn sàn.",
+              "Chỉ số kỹ thuật xác nhận đà hồi phục ổn định."
+            ]
+
+            ĐỊNH DẠNG:
+            Trả về DUY NHẤT một chuỗi JSON hợp lệ, KHÔNG bọc mã markdown ```json ... ```.
+            Cấu trúc JSON bắt buộc:
+            {
+              "trendPrediction": "<BULLISH_UPTREND | BEARISH_DOWNTREND | SIDEWAYS_CONSOLIDATION>",
+              "supportLevel": <số thập phân ước lượng ngưỡng hỗ trợ>,
+              "resistanceLevel": <số thập phân ước lượng ngưỡng kháng cự>,
+              "recommendation": "<STRONG_BUY | BUY | HOLD | SELL | STRONG_SELL>",
+              "confidenceScore": <số nguyên từ 0 đến 100>,
+              "keyDrivers": ["<luận điểm 1 tối đa 85 ký tự>", "<luận điểm 2 tối đa 85 ký tự>", "<luận điểm 3 tối đa 85 ký tự>"],
+              "technicalOutlook": "<đúng 1 câu tiếng Việt tối đa 140 ký tự>",
+              "fundamentalOutlook": "<đúng 1 câu tiếng Việt tối đa 140 ký tự>"
+            }
+            """;
+
+        StringBuilder userPrompt = new StringBuilder();
+        userPrompt.append("--- BẢNG GIÁ THỜI GIAN THỰC (8 TÀI SẢN CHÍNH) ---\n");
+        if (allPrices != null) {
+            for (MarketPriceDto p : allPrices) {
+                userPrompt.append(String.format("• %s (%s): Giá=$%s, Biến động 24h=%s%%\n",
+                        p.getSymbol(), p.getName() != null ? p.getName() : p.getSymbol(),
+                        p.getPrice(), p.getChange24h() != null ? p.getChange24h() : "0.0"));
+            }
+        }
+
+        userPrompt.append("\n--- CHUỖI ").append(inputCandles.size()).append(" CÂY NẾN THỊ TRƯỜNG THỰC TẾ (BTC/USDT) ---\n");
+        for (CandleDto c : inputCandles) {
+            userPrompt.append(String.format("Ngày %s: Open=%s, High=%s, Low=%s, Close=%s, Vol=%s\n",
+                    c.getTime(), c.getOpen(), c.getHigh(), c.getLow(), c.getClose(), c.getVolume()));
+        }
+
+        if (recentNews != null && !recentNews.isEmpty()) {
+            userPrompt.append("\n--- TIN TỨC VÀ TÂM LÝ THỊ TRƯỜNG MỚI NHẤT ---\n");
+            int newsCount = Math.min(3, recentNews.size());
+            for (int i = 0; i < newsCount; i++) {
+                NewsAiCache n = recentNews.get(i);
+                userPrompt.append(String.format("• [%s] %s (Tâm lý: %s, Lý do: %s)\n",
+                        n.getSymbol(), n.getTitle(), n.getSentiment(), n.getReason()));
+            }
+        }
+
+        return callGeminiAndParse(systemPrompt, userPrompt.toString(), apiKey, shardName,
+                "MARKET", "Nhận định toàn thị trường", benchmarkPrice, inputCandles.size(), timeframe);
+    }
+
+    private ForecastResponse callGeminiAndParse(String systemPrompt,
+                                                String userPrompt,
+                                                String apiKey,
+                                                String shardName,
+                                                String symbol,
+                                                String assetName,
+                                                BigDecimal currentPrice,
+                                                int candleCount,
+                                                String timeframe) {
         try {
             Map<String, Object> requestBody = Map.of(
                     "model", geminiModel,
                     "temperature", 0.2,
                     "messages", List.of(
                             Map.of("role", "system", "content", systemPrompt),
-                            Map.of("role", "user", "content", userPrompt.toString())
+                            Map.of("role", "user", "content", userPrompt)
                     )
             );
 
@@ -274,8 +411,8 @@ public class GeminiForecastClient {
 
             ForecastResponse forecastResponse = new ForecastResponse(
                     symbol,
-                    priceDto.getName() != null ? priceDto.getName() : symbol,
-                    priceDto.getPrice(),
+                    assetName,
+                    currentPrice,
                     trend,
                     timeframe != null ? timeframe : "24H_7D",
                     support,
@@ -286,7 +423,7 @@ public class GeminiForecastClient {
                     techOutlook,
                     fundOutlook,
                     "GEMINI",
-                    inputCandles.size(),
+                    candleCount,
                     false,
                     LocalDateTime.now()
             );

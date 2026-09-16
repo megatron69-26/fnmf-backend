@@ -119,7 +119,7 @@ public class WatchlistService {
                 result.add(new WatchlistItemDto(
                         w.getId(),
                         symbol,
-                        priceDto != null && priceDto.getName() != null ? priceDto.getName() : symbol,
+                        priceDto != null && priceDto.getName() != null ? priceDto.getName() : com.llmgateway.config.MarketSymbolConfig.getDisplayName(symbol),
                         priceDto != null && priceDto.getCategory() != null ? priceDto.getCategory() : "MARKET",
                         priceDto != null ? priceDto.getPrice() : null,
                         priceDto != null ? priceDto.getChange24h() : null,

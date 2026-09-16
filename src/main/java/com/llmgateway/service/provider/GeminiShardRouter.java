@@ -18,7 +18,13 @@ public class GeminiShardRouter {
     private static final Set<String> SHARD_1_SYMBOLS = Set.of(
             MarketSymbolConfig.CANONICAL_BTC,
             MarketSymbolConfig.CANONICAL_ETH,
-            MarketSymbolConfig.CANONICAL_XAU
+            MarketSymbolConfig.CANONICAL_XAU,
+            MarketSymbolConfig.CANONICAL_BNB,
+            MarketSymbolConfig.CANONICAL_SOL,
+            MarketSymbolConfig.CANONICAL_XRP,
+            MarketSymbolConfig.CANONICAL_ADA,
+            MarketSymbolConfig.CANONICAL_DOGE,
+            "MARKET"
     );
 
     private static final Set<String> SHARD_2_SYMBOLS = Set.of(
@@ -44,10 +50,17 @@ public class GeminiShardRouter {
     @Value("${gemini.api.key-shard-3:${GEMINI_API_KEY_SHARD_3:}}")
     private String shard3Key;
 
+    @Value("${gemini.market.shard:${GEMINI_MARKET_SHARD:GEMINI_SHARD_1}}")
+    private String marketShard = SHARD_1;
+
     public void setShardKeys(String k1, String k2, String k3) {
         this.shard1Key = k1;
         this.shard2Key = k2;
         this.shard3Key = k3;
+    }
+
+    public void setMarketShard(String marketShard) {
+        this.marketShard = marketShard;
     }
 
     public record GeminiShardInfo(
@@ -55,12 +68,47 @@ public class GeminiShardRouter {
             String apiKey
     ) {}
 
+    private String resolveMarketShard() {
+        if (marketShard == null || marketShard.isBlank()) {
+            return SHARD_1;
+        }
+        String clean = marketShard.trim();
+        if (SHARD_1.equalsIgnoreCase(clean)) {
+            return SHARD_1;
+        }
+        if (SHARD_2.equalsIgnoreCase(clean)) {
+            return SHARD_2;
+        }
+        if (SHARD_3.equalsIgnoreCase(clean)) {
+            return SHARD_3;
+        }
+        throw new ForecastUnavailableException("Cấu hình GEMINI_MARKET_SHARD không hợp lệ: '" + marketShard
+                + "'. Chỉ chấp nhận GEMINI_SHARD_1, GEMINI_SHARD_2 hoặc GEMINI_SHARD_3.");
+    }
+
     public GeminiShardInfo resolveShard(String symbol) {
         if (symbol == null || symbol.isBlank()) {
             throw new IllegalArgumentException("Mã tài sản không được để trống khi định tuyến Gemini shard");
         }
 
-        String canonical = MarketSymbolConfig.getCanonicalSymbol(symbol);
+        String clean = symbol.trim().toUpperCase();
+        if ("MARKET".equals(clean)) {
+            String targetShard = resolveMarketShard();
+            if (SHARD_2.equals(targetShard)) {
+                validateKey(shard2Key, SHARD_2, "MARKET");
+                return new GeminiShardInfo(SHARD_2, shard2Key.trim());
+            } else if (SHARD_3.equals(targetShard)) {
+                validateKey(shard3Key, SHARD_3, "MARKET");
+                return new GeminiShardInfo(SHARD_3, shard3Key.trim());
+            } else {
+                validateKey(shard1Key, SHARD_1, "MARKET");
+                return new GeminiShardInfo(SHARD_1, shard1Key.trim());
+            }
+        }
+
+        String canonical = MarketSymbolConfig.isSupported(symbol)
+                ? MarketSymbolConfig.getCanonicalSymbol(symbol)
+                : clean;
 
         if (SHARD_1_SYMBOLS.contains(canonical)) {
             validateKey(shard1Key, SHARD_1, canonical);
@@ -81,7 +129,19 @@ public class GeminiShardRouter {
     }
 
     public String resolveShardName(String symbol) {
-        String canonical = MarketSymbolConfig.getCanonicalSymbol(symbol);
+        if (symbol == null || symbol.isBlank()) {
+            throw new IllegalArgumentException("Mã tài sản không được để trống khi định tuyến Gemini shard");
+        }
+
+        String clean = symbol.trim().toUpperCase();
+        if ("MARKET".equals(clean)) {
+            return resolveMarketShard();
+        }
+
+        String canonical = MarketSymbolConfig.isSupported(symbol)
+                ? MarketSymbolConfig.getCanonicalSymbol(symbol)
+                : clean;
+
         if (SHARD_1_SYMBOLS.contains(canonical)) return SHARD_1;
         if (SHARD_2_SYMBOLS.contains(canonical)) return SHARD_2;
         if (SHARD_3_SYMBOLS.contains(canonical)) return SHARD_3;

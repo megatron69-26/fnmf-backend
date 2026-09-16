@@ -7,6 +7,7 @@ import com.llmgateway.dto.market.CandleDto;
 import com.llmgateway.dto.market.MarketPriceDto;
 import com.llmgateway.dto.watchlist.WatchlistItemDto;
 import com.llmgateway.entity.Watchlist;
+import com.llmgateway.exception.ForecastUnavailableException;
 import com.llmgateway.exception.MarketDataUnavailableException;
 import com.llmgateway.exception.UnauthorizedException;
 import com.llmgateway.repository.MarketForecastRepository;
@@ -315,20 +316,23 @@ public class MarketProviderFailoverAndSecurityTest {
         // Case A: MarketDataService ném MarketDataUnavailableException
         doThrow(new MarketDataUnavailableException("Provider offline"))
                 .when(mockMarketData).getPriceBySymbol("BTCUSDT");
-        assertThrows(MarketDataUnavailableException.class, () -> forecastService.generateForecast(request));
+        ForecastUnavailableException exA = assertThrows(ForecastUnavailableException.class, () -> forecastService.generateForecast(request));
+        assertInstanceOf(MarketDataUnavailableException.class, exA.getCause());
 
         // Case B: MarketPriceDto có stale = true
         reset(mockMarketData);
         MarketPriceDto stalePrice = new MarketPriceDto("BTCUSDT", "Bitcoin", "CRYPTO", new BigDecimal("65000.00"), BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, "old");
         stalePrice.setStale(true);
         doReturn(stalePrice).when(mockMarketData).getPriceBySymbol("BTCUSDT");
-        assertThrows(MarketDataUnavailableException.class, () -> forecastService.generateForecast(request));
+        ForecastUnavailableException exB = assertThrows(ForecastUnavailableException.class, () -> forecastService.generateForecast(request));
+        assertInstanceOf(MarketDataUnavailableException.class, exB.getCause());
 
         // Case C: MarketPriceDto có price = null
         reset(mockMarketData);
         MarketPriceDto nullPrice = new MarketPriceDto("BTCUSDT", "Bitcoin", "CRYPTO", null, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, "old");
         doReturn(nullPrice).when(mockMarketData).getPriceBySymbol("BTCUSDT");
-        assertThrows(MarketDataUnavailableException.class, () -> forecastService.generateForecast(request));
+        ForecastUnavailableException exC = assertThrows(ForecastUnavailableException.class, () -> forecastService.generateForecast(request));
+        assertInstanceOf(MarketDataUnavailableException.class, exC.getCause());
 
         // Tuyệt đối KHÔNG lưu dự báo mới vào DB khi market data không hợp lệ!
         verify(mockForecastRepo, never()).save(any());
@@ -456,25 +460,18 @@ public class MarketProviderFailoverAndSecurityTest {
         BinanceMarketClient mockBinance = mock(BinanceMarketClient.class);
         MarketDataService service = new MarketDataService(objectMapper, mockBinance, mockStockService);
 
-        // 1. Cổ phiếu với interval="random" -> ném IllegalArgumentException
+        // 1. Symbol hợp lệ với interval="random" -> ném IllegalArgumentException
         IllegalArgumentException exRandom = assertThrows(
                 IllegalArgumentException.class,
-                () -> service.getCandles("AAPL", "random")
+                () -> service.getCandles("BTCUSDT", "random")
         );
         assertTrue(exRandom.getMessage().contains("Khoảng thời gian không hợp lệ"));
 
-        // 2. Cổ phiếu với interval="5m" -> ném IllegalArgumentException
+        // 2. Symbol hợp lệ với interval="5m" -> ném IllegalArgumentException
         IllegalArgumentException ex5m = assertThrows(
                 IllegalArgumentException.class,
-                () -> service.getCandles("AAPL", "5m")
+                () -> service.getCandles("BTCUSDT", "5m")
         );
         assertTrue(ex5m.getMessage().contains("Khoảng thời gian không hợp lệ"));
-
-        // 3. Cổ phiếu với interval="1m" -> được chấp nhận và gọi mockStockService
-        when(mockStockService.getStockCandles("AAPL", "1m")).thenReturn(List.of());
-        List<CandleDto> candles1m = service.getCandles("AAPL", "1m");
-        assertNotNull(candles1m);
-        verify(mockStockService, times(1)).getStockCandles("AAPL", "1m");
-        verifyNoInteractions(mockBinance);
     }
 }

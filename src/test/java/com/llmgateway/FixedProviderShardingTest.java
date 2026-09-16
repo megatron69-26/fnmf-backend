@@ -155,11 +155,11 @@ public class FixedProviderShardingTest {
     // =========================================================================
 
     @Test
-    @DisplayName("Catalog 8 cổ phiếu là danh mục tĩnh, tuyệt đối không gọi provider")
+    @DisplayName("Catalog 5 cặp Binance là danh mục tĩnh, tuyệt đối không gọi provider")
     public void testCatalogDoesNotCallProvider() throws Exception {
         List<StockCatalogDto> catalog = stockMarketService.getStockCatalog();
         assertNotNull(catalog);
-        assertEquals(8, catalog.size());
+        assertEquals(5, catalog.size());
 
         // Verify zero HTTP calls made
         verify(mockHttpClient, never()).send(any(), any());
@@ -271,7 +271,7 @@ public class FixedProviderShardingTest {
 
         TradeService tradeService = new TradeService(walletRepo, holdingRepo, txRepo, marketDataService, executor);
 
-        OrderRequest request = new OrderRequest("AAPL", "BUY", BigDecimal.ONE, "client-order-uuid-1234");
+        OrderRequest request = new OrderRequest("BNBUSDT", "BUY", BigDecimal.ONE, "client-order-uuid-1234");
 
         // 1. Giá null -> từ chối
         assertThrows(MarketDataUnavailableException.class, () -> {
@@ -279,18 +279,18 @@ public class FixedProviderShardingTest {
         });
 
         // 2. Giá stale=true -> từ chối
-        MarketPriceDto stalePrice = new MarketPriceDto("AAPL", "Apple", "STOCK", BigDecimal.valueOf(220.0),
-                BigDecimal.ZERO, BigDecimal.valueOf(220.0), BigDecimal.valueOf(220.0),
-                "2026-09-16T14:00:00", true, "CACHE_ALPACA", "2026-09-16T14:00:00");
+        MarketPriceDto stalePrice = new MarketPriceDto("BNBUSDT", "BNB", "CRYPTO", BigDecimal.valueOf(550.0),
+                BigDecimal.ZERO, BigDecimal.valueOf(550.0), BigDecimal.valueOf(550.0),
+                "2026-09-16T14:00:00", true, "CACHE_BINANCE", "2026-09-16T14:00:00");
 
         assertThrows(MarketDataUnavailableException.class, () -> {
             tradeService.executeOrder(1L, request, stalePrice);
         });
 
         // 3. Giá hợp lệ (stale=false, price > 0)
-        MarketPriceDto validPrice = new MarketPriceDto("AAPL", "Apple", "STOCK", BigDecimal.valueOf(220.0),
-                BigDecimal.ZERO, BigDecimal.valueOf(220.0), BigDecimal.valueOf(220.0),
-                "2026-09-16T14:00:00", false, "ALPACA", "2026-09-16T14:00:00");
+        MarketPriceDto validPrice = new MarketPriceDto("BNBUSDT", "BNB", "CRYPTO", BigDecimal.valueOf(550.0),
+                BigDecimal.ZERO, BigDecimal.valueOf(550.0), BigDecimal.valueOf(550.0),
+                "2026-09-16T14:00:00", false, "BINANCE", "2026-09-16T14:00:00");
 
         Wallet wallet = new Wallet(1L, BigDecimal.valueOf(1000.0));
         when(walletRepo.findByUserId(1L)).thenReturn(Optional.of(wallet));
@@ -298,6 +298,12 @@ public class FixedProviderShardingTest {
 
         assertDoesNotThrow(() -> {
             tradeService.executeOrder(1L, request, validPrice);
+        });
+
+        // 4. Lệnh cho cổ phiếu cũ AAPL bị từ chối với UnsupportedSymbolException
+        OrderRequest aaplRequest = new OrderRequest("AAPL", "BUY", BigDecimal.ONE, "client-order-uuid-aapl");
+        assertThrows(UnsupportedSymbolException.class, () -> {
+            tradeService.executeOrder(1L, aaplRequest, validPrice);
         });
     }
 

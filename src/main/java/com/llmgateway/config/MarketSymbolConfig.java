@@ -36,7 +36,14 @@ public final class MarketSymbolConfig {
     public static final String CANONICAL_ETH = "ETHUSDT";
     public static final String CANONICAL_XAU = "XAUUSD";
 
-    // 8 cổ phiếu hỗ trợ chính thức
+    // 5 cặp Binance mới thay thế cổ phiếu
+    public static final String CANONICAL_BNB = "BNBUSDT";
+    public static final String CANONICAL_SOL = "SOLUSDT";
+    public static final String CANONICAL_XRP = "XRPUSDT";
+    public static final String CANONICAL_ADA = "ADAUSDT";
+    public static final String CANONICAL_DOGE = "DOGEUSDT";
+
+    // 8 cổ phiếu cũ (ngừng giao dịch mới, giữ hằng số để tham chiếu lịch sử/audit)
     public static final String CANONICAL_AAPL = "AAPL";
     public static final String CANONICAL_MSFT = "MSFT";
     public static final String CANONICAL_NVDA = "NVDA";
@@ -72,63 +79,40 @@ public final class MarketSymbolConfig {
                 "PAXGUSDT",
                 "Binance PAXG/USDT (Gold-backed real spot commodity reference)"
         ));
-
-        // 8 Cổ phiếu Mỹ
-        reg.put(CANONICAL_AAPL, new SymbolMeta(
-                CANONICAL_AAPL,
-                "Apple Inc.",
-                "STOCK",
-                null,
-                "Alpha Vantage TIME_SERIES_DAILY"
+        reg.put(CANONICAL_BNB, new SymbolMeta(
+                CANONICAL_BNB,
+                "BNB",
+                "CRYPTO",
+                "BNBUSDT",
+                "Binance Spot BNB/USDT"
         ));
-        reg.put(CANONICAL_MSFT, new SymbolMeta(
-                CANONICAL_MSFT,
-                "Microsoft Corporation",
-                "STOCK",
-                null,
-                "Alpha Vantage TIME_SERIES_DAILY"
+        reg.put(CANONICAL_SOL, new SymbolMeta(
+                CANONICAL_SOL,
+                "Solana",
+                "CRYPTO",
+                "SOLUSDT",
+                "Binance Spot SOL/USDT"
         ));
-        reg.put(CANONICAL_NVDA, new SymbolMeta(
-                CANONICAL_NVDA,
-                "NVIDIA Corporation",
-                "STOCK",
-                null,
-                "Alpha Vantage TIME_SERIES_DAILY"
+        reg.put(CANONICAL_XRP, new SymbolMeta(
+                CANONICAL_XRP,
+                "XRP",
+                "CRYPTO",
+                "XRPUSDT",
+                "Binance Spot XRP/USDT"
         ));
-        reg.put(CANONICAL_TSLA, new SymbolMeta(
-                CANONICAL_TSLA,
-                "Tesla, Inc.",
-                "STOCK",
-                null,
-                "Alpha Vantage TIME_SERIES_DAILY"
+        reg.put(CANONICAL_ADA, new SymbolMeta(
+                CANONICAL_ADA,
+                "Cardano",
+                "CRYPTO",
+                "ADAUSDT",
+                "Binance Spot ADA/USDT"
         ));
-        reg.put(CANONICAL_AMZN, new SymbolMeta(
-                CANONICAL_AMZN,
-                "Amazon.com, Inc.",
-                "STOCK",
-                null,
-                "Alpha Vantage TIME_SERIES_DAILY"
-        ));
-        reg.put(CANONICAL_META, new SymbolMeta(
-                CANONICAL_META,
-                "Meta Platforms, Inc.",
-                "STOCK",
-                null,
-                "Alpha Vantage TIME_SERIES_DAILY"
-        ));
-        reg.put(CANONICAL_GOOGL, new SymbolMeta(
-                CANONICAL_GOOGL,
-                "Alphabet Inc. (Google)",
-                "STOCK",
-                null,
-                "Alpha Vantage TIME_SERIES_DAILY"
-        ));
-        reg.put(CANONICAL_JPM, new SymbolMeta(
-                CANONICAL_JPM,
-                "JPMorgan Chase & Co.",
-                "STOCK",
-                null,
-                "Alpha Vantage TIME_SERIES_DAILY"
+        reg.put(CANONICAL_DOGE, new SymbolMeta(
+                CANONICAL_DOGE,
+                "Dogecoin",
+                "CRYPTO",
+                "DOGEUSDT",
+                "Binance Spot DOGE/USDT"
         ));
 
         CANONICAL_REGISTRY = Collections.unmodifiableMap(reg);
@@ -154,16 +138,35 @@ public final class MarketSymbolConfig {
         aliases.put("PAXGUSDT", CANONICAL_XAU);
         aliases.put("GOLD", CANONICAL_XAU);
 
-        // Stock aliases
-        aliases.put("AAPL", CANONICAL_AAPL);
-        aliases.put("MSFT", CANONICAL_MSFT);
-        aliases.put("NVDA", CANONICAL_NVDA);
-        aliases.put("TSLA", CANONICAL_TSLA);
-        aliases.put("AMZN", CANONICAL_AMZN);
-        aliases.put("META", CANONICAL_META);
-        aliases.put("GOOGL", CANONICAL_GOOGL);
-        aliases.put("GOOG", CANONICAL_GOOGL);
-        aliases.put("JPM", CANONICAL_JPM);
+        // BNB aliases
+        aliases.put("BNB", CANONICAL_BNB);
+        aliases.put("BNBUSDT", CANONICAL_BNB);
+        aliases.put("BNB/USDT", CANONICAL_BNB);
+        aliases.put("BNBUSD", CANONICAL_BNB);
+
+        // SOL aliases
+        aliases.put("SOL", CANONICAL_SOL);
+        aliases.put("SOLUSDT", CANONICAL_SOL);
+        aliases.put("SOL/USDT", CANONICAL_SOL);
+        aliases.put("SOLUSD", CANONICAL_SOL);
+
+        // XRP aliases
+        aliases.put("XRP", CANONICAL_XRP);
+        aliases.put("XRPUSDT", CANONICAL_XRP);
+        aliases.put("XRP/USDT", CANONICAL_XRP);
+        aliases.put("XRPUSD", CANONICAL_XRP);
+
+        // ADA aliases
+        aliases.put("ADA", CANONICAL_ADA);
+        aliases.put("ADAUSDT", CANONICAL_ADA);
+        aliases.put("ADA/USDT", CANONICAL_ADA);
+        aliases.put("ADAUSD", CANONICAL_ADA);
+
+        // DOGE aliases
+        aliases.put("DOGE", CANONICAL_DOGE);
+        aliases.put("DOGEUSDT", CANONICAL_DOGE);
+        aliases.put("DOGE/USDT", CANONICAL_DOGE);
+        aliases.put("DOGEUSD", CANONICAL_DOGE);
 
         ALIAS_MAP = Collections.unmodifiableMap(aliases);
     }
@@ -195,8 +198,25 @@ public final class MarketSymbolConfig {
     }
 
     public static String getCanonicalSymbol(String symbol) {
-        validateSupported(symbol);
-        return ALIAS_MAP.get(normalizeKey(symbol));
+        if (symbol == null || symbol.trim().isEmpty()) {
+            throw new UnsupportedSymbolException("Mã tài sản không được để trống");
+        }
+        String clean = normalizeKey(symbol);
+        String canonical = ALIAS_MAP.get(clean);
+        if (canonical != null) {
+            return canonical;
+        }
+        return switch (clean) {
+            case "AAPL" -> CANONICAL_AAPL;
+            case "MSFT" -> CANONICAL_MSFT;
+            case "NVDA" -> CANONICAL_NVDA;
+            case "TSLA" -> CANONICAL_TSLA;
+            case "AMZN" -> CANONICAL_AMZN;
+            case "META" -> CANONICAL_META;
+            case "GOOGL", "GOOG" -> CANONICAL_GOOGL;
+            case "JPM" -> CANONICAL_JPM;
+            default -> throw new UnsupportedSymbolException("Mã tài sản chưa được hỗ trợ: " + symbol);
+        };
     }
 
     public static SymbolMeta getMeta(String canonicalSymbol) {
@@ -217,6 +237,20 @@ public final class MarketSymbolConfig {
 
     public static String getDisplayName(String symbol) {
         if (!isSupported(symbol)) {
+            if (symbol != null) {
+                String clean = symbol.trim().toUpperCase(Locale.ROOT);
+                return switch (clean) {
+                    case "AAPL" -> "Apple Inc.";
+                    case "MSFT" -> "Microsoft Corporation";
+                    case "NVDA" -> "NVIDIA Corporation";
+                    case "TSLA" -> "Tesla, Inc.";
+                    case "AMZN" -> "Amazon.com, Inc.";
+                    case "META" -> "Meta Platforms, Inc.";
+                    case "GOOGL", "GOOG" -> "Alphabet Inc. (Google)";
+                    case "JPM" -> "JPMorgan Chase & Co.";
+                    default -> symbol;
+                };
+            }
             return symbol;
         }
         String canonical = getCanonicalSymbol(symbol);
@@ -229,31 +263,21 @@ public final class MarketSymbolConfig {
     }
 
     public static List<SymbolMeta> getCryptoAndCommoditySymbols() {
-        List<SymbolMeta> list = new ArrayList<>();
-        for (SymbolMeta meta : CANONICAL_REGISTRY.values()) {
-            if (!"STOCK".equalsIgnoreCase(meta.category())) {
-                list.add(meta);
-            }
-        }
-        return Collections.unmodifiableList(list);
+        return List.copyOf(CANONICAL_REGISTRY.values());
     }
 
     public static List<SymbolMeta> getStockSymbols() {
-        List<SymbolMeta> list = new ArrayList<>();
-        for (SymbolMeta meta : CANONICAL_REGISTRY.values()) {
-            if ("STOCK".equalsIgnoreCase(meta.category())) {
-                list.add(meta);
-            }
-        }
-        return Collections.unmodifiableList(list);
+        return Collections.emptyList();
     }
 
     public static List<StockCatalogDto> getStockCatalog() {
-        List<StockCatalogDto> catalog = new ArrayList<>();
-        for (SymbolMeta meta : getStockSymbols()) {
-            catalog.add(new StockCatalogDto(meta.canonicalSymbol(), meta.name()));
-        }
-        return Collections.unmodifiableList(catalog);
+        return List.of(
+                new StockCatalogDto(CANONICAL_BNB, "BNB"),
+                new StockCatalogDto(CANONICAL_SOL, "Solana"),
+                new StockCatalogDto(CANONICAL_XRP, "XRP"),
+                new StockCatalogDto(CANONICAL_ADA, "Cardano"),
+                new StockCatalogDto(CANONICAL_DOGE, "Dogecoin")
+        );
     }
 
     private static String normalizeKey(String symbol) {

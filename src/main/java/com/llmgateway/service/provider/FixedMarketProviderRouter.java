@@ -30,7 +30,6 @@ public class FixedMarketProviderRouter {
             throw new IllegalArgumentException("Mã tài sản không được để trống");
         }
 
-        MarketSymbolConfig.validateSupported(symbol);
         String canonical = MarketSymbolConfig.getCanonicalSymbol(symbol);
 
         if (binanceProvider.supports(canonical)) {

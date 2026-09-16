@@ -20,7 +20,12 @@ public class BinanceMarketDataProvider implements MarketContentProvider {
     private static final Set<String> SUPPORTED_SYMBOLS = Set.of(
             MarketSymbolConfig.CANONICAL_BTC,
             MarketSymbolConfig.CANONICAL_ETH,
-            MarketSymbolConfig.CANONICAL_XAU
+            MarketSymbolConfig.CANONICAL_XAU,
+            MarketSymbolConfig.CANONICAL_BNB,
+            MarketSymbolConfig.CANONICAL_SOL,
+            MarketSymbolConfig.CANONICAL_XRP,
+            MarketSymbolConfig.CANONICAL_ADA,
+            MarketSymbolConfig.CANONICAL_DOGE
     );
 
     private final BinanceMarketClient binanceMarketClient;

@@ -232,6 +232,20 @@ public class ForecastResponse {
         this.aiShard = aiShard;
     }
 
+    private Boolean stale = false;
+
+    public Boolean isStale() {
+        return stale;
+    }
+
+    public Boolean getStale() {
+        return stale;
+    }
+
+    public void setStale(Boolean stale) {
+        this.stale = stale;
+    }
+
     public void applyQuota(com.llmgateway.dto.quota.RefreshQuotaDto quota) {
         if (quota != null) {
             this.maxDailyRefreshes = quota.getMaxDailyRefreshes();

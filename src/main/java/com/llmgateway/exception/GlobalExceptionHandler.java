@@ -80,11 +80,11 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(ForecastUnavailableException.class)
     public ResponseEntity<Map<String, Object>> handleForecastUnavailable(ForecastUnavailableException ex) {
-        log.warn("Forecast unavailable: {}", ex.getMessage());
+        log.warn("Forecast unavailable: {}", ex.getClass().getSimpleName());
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(Map.of(
                 "status", "ERROR",
                 "code", "FORECAST_UNAVAILABLE",
-                "message", ex.getMessage() != null ? ex.getMessage() : "Chưa thể tạo nhận định lúc này. Vui lòng thử lại sau.",
+                "message", "Chưa thể tạo nhận định lúc này. Vui lòng thử lại sau.",
                 "timestamp", Instant.now().toString()
         ));
     }

@@ -55,26 +55,50 @@ public class ForecastController {
     }
 
     /**
+     * GET /api/forecast/market?timeframe=24H_7D
+     * Lấy nhận định toàn thị trường AI thống nhất (MARKET-WIDE FORECAST).
+     */
+    @GetMapping("/market")
+    public ResponseEntity<ForecastResponse> getMarketForecast(
+            @RequestParam(defaultValue = "24H_7D") String timeframe) {
+        ForecastResponse response = forecastService.generateMarketForecast(timeframe, false);
+        return ResponseEntity.ok(response);
+    }
+
+    /**
+     * POST /api/forecast/market/refresh
+     * Làm mới thủ công cưỡng bức nhận định toàn thị trường có kiểm soát hạn mức dùng chung.
+     */
+    @PostMapping("/market/refresh")
+    public ResponseEntity<?> refreshMarketForecast(
+            @RequestHeader(value = "Authorization", required = false) String authHeader,
+            @RequestHeader(value = "Client-Request-ID", required = false) String headerRequestId,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
+            @RequestBody(required = false) ForecastRequest request) {
+        String tf = (request != null && request.getTimeframe() != null) ? request.getTimeframe() : "24H_7D";
+        String clientReqId = (request != null) ? request.getClientRequestId() : null;
+        ForecastRequest forced = new ForecastRequest("MARKET", tf, clientReqId);
+        return refreshForecast(authHeader, headerRequestId, idempotencyKey, forced);
+    }
+
+    /**
      * GET /api/forecast/{symbol}?timeframe=24H_7D
-     * Lấy phân tích dự báo xu hướng AI cho 1 mã tài sản (Ví dụ: BTCUSDT, ETHUSDT, XAUUSD, USOIL)
+     * Alias tương thích ngược: trả về nhận định toàn thị trường thống nhất.
      */
     @GetMapping("/{symbol}")
     public ResponseEntity<ForecastResponse> getForecastBySymbol(
             @PathVariable String symbol,
             @RequestParam(defaultValue = "24H_7D") String timeframe) {
-        ForecastRequest request = new ForecastRequest(symbol, timeframe);
-        ForecastResponse response = forecastService.generateForecast(request);
-        return ResponseEntity.ok(response);
+        return ResponseEntity.ok(forecastService.generateForecast(new ForecastRequest(symbol, timeframe)));
     }
 
     /**
      * POST /api/forecast/analyze
-     * Tạo hoặc lấy bản dự báo thị trường AI (ưu tiên cache 15 phút)
+     * Alias tương thích ngược: tạo hoặc lấy bản nhận định toàn thị trường thống nhất.
      */
     @PostMapping("/analyze")
     public ResponseEntity<ForecastResponse> analyzeForecast(@Valid @RequestBody ForecastRequest request) {
-        ForecastResponse response = forecastService.generateForecast(request);
-        return ResponseEntity.ok(response);
+        return ResponseEntity.ok(forecastService.generateForecast(request));
     }
 
     /**
@@ -105,6 +129,10 @@ public class ForecastController {
             throw new IllegalStateException("ContentRefreshQuotaService chưa được cấu hình");
         }
 
+        // Cưỡng chế symbol MARKET cho toàn bộ luồng refresh
+        String timeframe = (request != null && request.getTimeframe() != null) ? request.getTimeframe() : "24H_7D";
+        ForecastRequest forcedRequest = new ForecastRequest("MARKET", timeframe, clientRequestId);
+
         // 1. Trừ lượt hạn mức dùng chung (Idempotent & Concurrency-safe)
         RefreshQuotaDto quota = quotaService.acquireRefreshQuota(userId, clientRequestId, "FORECAST");
 
@@ -112,24 +140,23 @@ public class ForecastController {
         if (quota.isReplay()) {
             log.info("REPLAY FORECAST REQUEST | userId={} | clientRequestId={} -> Trả kết quả từ cache nếu có, không gọi provider",
                     userId, clientRequestId);
-            Optional<ForecastResponse> cached = forecastService.getFreshForecastFromCacheOnly(request.getSymbol());
+            Optional<ForecastResponse> cached = forecastService.getFreshForecastFromCacheOnly("MARKET");
             if (cached.isPresent()) {
                 ForecastResponse resp = cached.get();
                 resp.applyQuota(quota);
                 return ResponseEntity.ok(resp);
             }
-            log.warn("REPLAY FORECAST REQUEST | Cache không tồn tại cho symbol={} -> Trả FORECAST_UNAVAILABLE an toàn, không gọi provider",
-                    request.getSymbol());
+            log.warn("REPLAY FORECAST REQUEST | Cache không tồn tại cho MARKET -> Trả FORECAST_UNAVAILABLE an toàn, không gọi provider");
             return buildForecastUnavailableResponse(quota);
         }
 
         // 3. Gọi làm mới dự báo bỏ qua cache 15 phút
         try {
-            ForecastResponse response = forecastService.generateForecast(request, true);
+            ForecastResponse response = forecastService.generateForecast(forcedRequest, true);
             response.applyQuota(quota);
             return ResponseEntity.ok(response);
         } catch (ForecastUnavailableException | MarketDataUnavailableException ex) {
-            log.warn("Lỗi provider khi làm mới Forecast sau khi đã trừ lượt: {}", ex.getMessage());
+            log.warn("Lỗi provider khi làm mới Forecast sau khi đã trừ lượt: {}", ex.getClass().getSimpleName());
             return buildForecastUnavailableResponse(quota);
         }
     }

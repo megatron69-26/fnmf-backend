@@ -104,22 +104,28 @@ public class StockMarketAndCatalogTest {
     // =========================================================================
 
     @Test
-    @DisplayName("Catalog trả về đúng 8 mã cổ phiếu và không thực hiện bất kỳ network request nào")
-    public void testStockCatalog_returnsEightStocksWithoutExternalCalls() throws IOException, InterruptedException {
+    @DisplayName("Catalog trả về đúng 5 cặp Binance mới và không thực hiện bất kỳ network request nào")
+    public void testStockCatalog_returnsFiveBinancePairsWithoutExternalCalls() throws IOException, InterruptedException {
         List<StockCatalogDto> catalog = stockMarketService.getStockCatalog();
 
         assertNotNull(catalog);
-        assertEquals(8, catalog.size());
+        assertEquals(5, catalog.size());
 
         List<String> symbols = catalog.stream().map(StockCatalogDto::symbol).toList();
-        assertTrue(symbols.contains("AAPL"));
-        assertTrue(symbols.contains("MSFT"));
-        assertTrue(symbols.contains("NVDA"));
-        assertTrue(symbols.contains("TSLA"));
-        assertTrue(symbols.contains("AMZN"));
-        assertTrue(symbols.contains("META"));
-        assertTrue(symbols.contains("GOOGL"));
-        assertTrue(symbols.contains("JPM"));
+        assertTrue(symbols.contains("BNBUSDT"));
+        assertTrue(symbols.contains("SOLUSDT"));
+        assertTrue(symbols.contains("XRPUSDT"));
+        assertTrue(symbols.contains("ADAUSDT"));
+        assertTrue(symbols.contains("DOGEUSDT"));
+
+        assertFalse(symbols.contains("AAPL"));
+        assertFalse(symbols.contains("MSFT"));
+        assertFalse(symbols.contains("NVDA"));
+        assertFalse(symbols.contains("TSLA"));
+        assertFalse(symbols.contains("AMZN"));
+        assertFalse(symbols.contains("META"));
+        assertFalse(symbols.contains("GOOGL"));
+        assertFalse(symbols.contains("JPM"));
 
         verify(mockHttpClient, never()).send(any(), any());
     }
@@ -276,7 +282,7 @@ public class StockMarketAndCatalogTest {
     // =========================================================================
 
     @Test
-    @DisplayName("TradeService từ chối mọi MarketPriceDto có stale=true kể cả cổ phiếu")
+    @DisplayName("TradeService từ chối mọi MarketPriceDto có stale=true")
     public void testTradeService_rejectsStalePriceUnconditionally() {
         WalletRepository mockWalletRepo = mock(WalletRepository.class);
         HoldingRepository mockHoldingRepo = mock(HoldingRepository.class);
@@ -286,18 +292,18 @@ public class StockMarketAndCatalogTest {
         TradeService tradeService = new TradeService(mockWalletRepo, mockHoldingRepo, mockTxRepo, mockMarketData);
 
         MarketPriceDto staleStockPrice = new MarketPriceDto(
-                "AAPL", "Apple Inc.", "STOCK", new BigDecimal("220.00"),
-                BigDecimal.ZERO, new BigDecimal("220.00"), new BigDecimal("220.00"),
-                "2026-09-14", true, "CACHE_ALPHA_VANTAGE", "2026-09-14"
+                "BNBUSDT", "BNB", "CRYPTO", new BigDecimal("550.00"),
+                BigDecimal.ZERO, new BigDecimal("550.00"), new BigDecimal("550.00"),
+                "2026-09-14", true, "CACHE_BINANCE", "2026-09-14"
         );
 
-        OrderRequest buyOrder = new OrderRequest("AAPL", "BUY", new BigDecimal("5"), "uuid-order-aapl-stale");
+        OrderRequest buyOrder = new OrderRequest("BNBUSDT", "BUY", new BigDecimal("5"), "uuid-order-bnb-stale");
         assertThrows(MarketDataUnavailableException.class, () ->
                 tradeService.executeOrder(10L, buyOrder, staleStockPrice));
     }
 
     @Test
-    @DisplayName("TradeService cho phép mua cổ phiếu khi giá fresh (stale=false)")
+    @DisplayName("TradeService cho phép mua 5 cặp Binance mới khi giá fresh (stale=false)")
     public void testTradeService_executesStockOrderWithFreshPrice() {
         WalletRepository mockWalletRepo = mock(WalletRepository.class);
         HoldingRepository mockHoldingRepo = mock(HoldingRepository.class);
@@ -310,29 +316,47 @@ public class StockMarketAndCatalogTest {
 
         when(mockWalletRepo.findByUserId(userId)).thenReturn(Optional.of(wallet));
         when(mockWalletRepo.findByUserIdForUpdate(userId)).thenReturn(Optional.of(wallet));
-        when(mockTxRepo.findByWalletIdAndClientOrderId(100L, "uuid-order-aapl-fresh")).thenReturn(Optional.empty());
-        when(mockHoldingRepo.findByWalletIdAndSymbolForUpdate(100L, "AAPL")).thenReturn(Optional.empty());
+        when(mockTxRepo.findByWalletIdAndClientOrderId(100L, "uuid-order-bnb-fresh")).thenReturn(Optional.empty());
+        when(mockHoldingRepo.findByWalletIdAndSymbolForUpdate(100L, "BNBUSDT")).thenReturn(Optional.empty());
         when(mockTxRepo.saveAndFlush(any(Transaction.class))).thenAnswer(inv -> inv.getArgument(0));
 
         TradeService tradeService = new TradeService(mockWalletRepo, mockHoldingRepo, mockTxRepo, mockMarketData);
 
-        // Giá cổ phiếu AAPL tươi với stale=false
+        // Giá BNBUSDT tươi với stale=false
         MarketPriceDto freshStockPrice = new MarketPriceDto(
-                "AAPL", "Apple Inc.", "STOCK", new BigDecimal("220.00"),
-                BigDecimal.ZERO, new BigDecimal("220.00"), new BigDecimal("220.00"),
-                "2026-09-14", false, "ALPHA_VANTAGE", "2026-09-14"
+                "BNBUSDT", "BNB", "CRYPTO", new BigDecimal("500.00"),
+                BigDecimal.ZERO, new BigDecimal("500.00"), new BigDecimal("500.00"),
+                "2026-09-14", false, "BINANCE", "2026-09-14"
         );
 
-        OrderRequest buyOrder = new OrderRequest("AAPL", "BUY", new BigDecimal("5"), "uuid-order-aapl-fresh");
+        OrderRequest buyOrder = new OrderRequest("BNBUSDT", "BUY", new BigDecimal("2"), "uuid-order-bnb-fresh");
         OrderResponse response = tradeService.executeOrder(userId, buyOrder, freshStockPrice);
 
         assertNotNull(response);
-        assertEquals("AAPL", response.getSymbol());
+        assertEquals("BNBUSDT", response.getSymbol());
         assertEquals("BUY", response.getType());
-        assertEquals(new BigDecimal("5"), response.getQuantity());
-        assertEquals(new BigDecimal("220.00"), response.getPrice());
-        assertEquals(new BigDecimal("1100.0000"), response.getTotalAmount());
-        assertEquals(new BigDecimal("8900.0000"), response.getRemainingBalance());
+        assertEquals(new BigDecimal("2"), response.getQuantity());
+        assertEquals(new BigDecimal("500.00"), response.getPrice());
+        assertEquals(new BigDecimal("1000.0000"), response.getTotalAmount());
+        assertEquals(new BigDecimal("9000.0000"), response.getRemainingBalance());
+    }
+
+    @Test
+    @DisplayName("TradeService từ chối đặt lệnh mới cho 8 cổ phiếu cũ với UnsupportedSymbolException")
+    public void testTradeService_rejectsOldStocksWithUnsupportedSymbolException() {
+        WalletRepository mockWalletRepo = mock(WalletRepository.class);
+        HoldingRepository mockHoldingRepo = mock(HoldingRepository.class);
+        TransactionRepository mockTxRepo = mock(TransactionRepository.class);
+        MarketDataService mockMarketData = mock(MarketDataService.class);
+
+        TradeService tradeService = new TradeService(mockWalletRepo, mockHoldingRepo, mockTxRepo, mockMarketData);
+
+        List<String> oldStocks = List.of("AAPL", "MSFT", "NVDA", "GOOGL", "TSLA", "AMZN", "META", "JPM");
+        for (String stock : oldStocks) {
+            MarketPriceDto price = new MarketPriceDto(stock, stock, "STOCK", new BigDecimal("150.00"), BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, "now");
+            OrderRequest order = new OrderRequest(stock, "BUY", BigDecimal.ONE, "uuid-order-" + stock);
+            assertThrows(UnsupportedSymbolException.class, () -> tradeService.executeOrder(10L, order, price));
+        }
     }
 
     // =========================================================================
@@ -401,38 +425,41 @@ public class StockMarketAndCatalogTest {
         Watchlist w1 = new Watchlist();
         w1.setId(1L);
         w1.setUserId(10L);
-        w1.setSymbol("AAPL");
+        w1.setSymbol("BNBUSDT");
         w1.setDisplayOrder(1);
         w1.setCreatedAt(LocalDateTime.now());
 
         Watchlist w2 = new Watchlist();
         w2.setId(2L);
         w2.setUserId(10L);
-        w2.setSymbol("NVDA");
+        w2.setSymbol("AAPL");
         w2.setDisplayOrder(2);
         w2.setCreatedAt(LocalDateTime.now());
 
         when(mockWatchlistRepo.findByUserIdOrderByDisplayOrderAsc(10L)).thenReturn(List.of(w1, w2));
 
-        stockMarketService.putInCache(new StockMarketService.CachedStockData(
-                "AAPL", "Apple Inc.", new BigDecimal("224.25"), new BigDecimal("1.50"),
-                "2026-09-14", List.of(), System.currentTimeMillis(), false
-        ));
+        MarketPriceDto bnbPrice = new MarketPriceDto(
+                "BNBUSDT", "BNB", "CRYPTO", new BigDecimal("550.00"), new BigDecimal("1.50"),
+                new BigDecimal("550.00"), new BigDecimal("550.00"), "2026-09-14", false, "BINANCE", "2026-09-14"
+        );
+        when(mockMarketData.getPriceBySymbol("BNBUSDT")).thenReturn(bnbPrice);
+        when(mockMarketData.getPriceBySymbol("AAPL")).thenThrow(new UnsupportedSymbolException("AAPL không hỗ trợ"));
 
         List<WatchlistItemDto> items = watchlistService.getUserWatchlist(10L);
         assertEquals(2, items.size());
 
-        WatchlistItemDto aaplItem = items.get(0);
-        assertEquals("AAPL", aaplItem.getSymbol());
-        assertEquals(new BigDecimal("224.25"), aaplItem.getCurrentPrice());
-        assertEquals("2026-09-14", aaplItem.getPriceAsOf());
-        assertFalse(aaplItem.getStale());
+        WatchlistItemDto bnbItem = items.get(0);
+        assertEquals("BNBUSDT", bnbItem.getSymbol());
+        assertEquals(new BigDecimal("550.00"), bnbItem.getCurrentPrice());
+        assertEquals("2026-09-14", bnbItem.getPriceAsOf());
+        assertFalse(bnbItem.getStale());
 
-        WatchlistItemDto nvdaItem = items.get(1);
-        assertEquals("NVDA", nvdaItem.getSymbol());
-        assertNull(nvdaItem.getCurrentPrice());
-        assertNull(nvdaItem.getPriceAsOf());
-        assertFalse(nvdaItem.getStale());
+        WatchlistItemDto aaplItem = items.get(1);
+        assertEquals("AAPL", aaplItem.getSymbol());
+        assertEquals("Apple Inc.", aaplItem.getName());
+        assertNull(aaplItem.getCurrentPrice());
+        assertNull(aaplItem.getPriceAsOf());
+        assertFalse(aaplItem.getStale());
     }
 
     // =========================================================================

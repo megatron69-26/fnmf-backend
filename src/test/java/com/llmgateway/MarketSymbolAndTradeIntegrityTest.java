@@ -36,26 +36,37 @@ public class MarketSymbolAndTradeIntegrityTest {
     // =========================================================================
 
     @Test
-    @DisplayName("MarketSymbolConfig chỉ hỗ trợ BTCUSDT, ETHUSDT, XAUUSD và từ chối USOIL")
+    @DisplayName("MarketSymbolConfig chỉ hỗ trợ đúng 8 tài sản Binance và từ chối 8 cổ phiếu cũ cùng USOIL")
     public void testMarketSymbolConfig_whitelistAndRejections() {
-        // Hợp lệ (Crypto, Commodity & 8 Cổ phiếu Mỹ)
+        // Hợp lệ (Đúng 8 tài sản Binance)
         assertTrue(MarketSymbolConfig.isSupported("BTCUSDT"));
         assertTrue(MarketSymbolConfig.isSupported("ETHUSDT"));
         assertTrue(MarketSymbolConfig.isSupported("XAUUSD"));
         assertTrue(MarketSymbolConfig.isSupported("BTC/USDT"));
         assertTrue(MarketSymbolConfig.isSupported("btcusdt"));
-        assertTrue(MarketSymbolConfig.isSupported("AAPL"));
-        assertTrue(MarketSymbolConfig.isSupported("aapl"));
-        assertTrue(MarketSymbolConfig.isSupported("NVDA"));
-        assertTrue(MarketSymbolConfig.isSupported("MSFT"));
+        assertTrue(MarketSymbolConfig.isSupported("BNBUSDT"));
+        assertTrue(MarketSymbolConfig.isSupported("SOLUSDT"));
+        assertTrue(MarketSymbolConfig.isSupported("XRPUSDT"));
+        assertTrue(MarketSymbolConfig.isSupported("ADAUSDT"));
+        assertTrue(MarketSymbolConfig.isSupported("DOGEUSDT"));
 
-        // Không hỗ trợ: USOIL, WTI, SPX, XYZ
+        // Không hỗ trợ: 8 Cổ phiếu cũ ngừng giao dịch mới & USOIL, WTI, SPX, XYZ
+        assertFalse(MarketSymbolConfig.isSupported("AAPL"));
+        assertFalse(MarketSymbolConfig.isSupported("MSFT"));
+        assertFalse(MarketSymbolConfig.isSupported("NVDA"));
+        assertFalse(MarketSymbolConfig.isSupported("GOOGL"));
+        assertFalse(MarketSymbolConfig.isSupported("TSLA"));
+        assertFalse(MarketSymbolConfig.isSupported("AMZN"));
+        assertFalse(MarketSymbolConfig.isSupported("META"));
+        assertFalse(MarketSymbolConfig.isSupported("JPM"));
         assertFalse(MarketSymbolConfig.isSupported("USOIL"));
         assertFalse(MarketSymbolConfig.isSupported("WTI"));
         assertFalse(MarketSymbolConfig.isSupported("SPX"));
         assertFalse(MarketSymbolConfig.isSupported("XYZ"));
 
         // Validate ném ngoại lệ đúng
+        assertThrows(UnsupportedSymbolException.class, () -> MarketSymbolConfig.validateSupported("AAPL"));
+        assertThrows(UnsupportedSymbolException.class, () -> MarketSymbolConfig.validateSupported("MSFT"));
         assertThrows(UnsupportedSymbolException.class, () -> MarketSymbolConfig.validateSupported("USOIL"));
         assertThrows(UnsupportedSymbolException.class, () -> MarketSymbolConfig.validateSupported("UNKNOWN"));
     }
@@ -66,7 +77,13 @@ public class MarketSymbolAndTradeIntegrityTest {
         assertEquals("BTCUSDT", MarketSymbolConfig.getBinanceSymbol("BTCUSDT"));
         assertEquals("ETHUSDT", MarketSymbolConfig.getBinanceSymbol("ETHUSDT"));
         assertEquals("PAXGUSDT", MarketSymbolConfig.getBinanceSymbol("XAUUSD"));
+        assertEquals("BNBUSDT", MarketSymbolConfig.getBinanceSymbol("BNBUSDT"));
+        assertEquals("SOLUSDT", MarketSymbolConfig.getBinanceSymbol("SOLUSDT"));
+        assertEquals("XRPUSDT", MarketSymbolConfig.getBinanceSymbol("XRPUSDT"));
+        assertEquals("ADAUSDT", MarketSymbolConfig.getBinanceSymbol("ADAUSDT"));
+        assertEquals("DOGEUSDT", MarketSymbolConfig.getBinanceSymbol("DOGEUSDT"));
 
+        assertThrows(UnsupportedSymbolException.class, () -> MarketSymbolConfig.getBinanceSymbol("AAPL"));
         assertThrows(UnsupportedSymbolException.class, () -> MarketSymbolConfig.getBinanceSymbol("USOIL"));
     }
 
