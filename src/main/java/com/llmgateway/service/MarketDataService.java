@@ -148,31 +148,51 @@ public class MarketDataService {
         throw new MarketDataUnavailableException("Dữ liệu thị trường tạm thời không khả dụng cho mã: " + canonicalSymbol);
     }
 
+    public static String normalizeInterval(String interval) {
+        if (interval == null || interval.isBlank()) {
+            return "daily";
+        }
+        String lower = interval.trim().toLowerCase(java.util.Locale.ROOT);
+        if ("daily".equals(lower) || "1d".equals(lower)) {
+            return "daily";
+        }
+        if ("1m".equals(lower)) {
+            return "1m";
+        }
+        throw new IllegalArgumentException("Khoảng thời gian không hợp lệ: " + interval + ". Chỉ hỗ trợ: 1m, daily");
+    }
+
     /**
      * Lấy chuỗi nến OHLC thật cho biểu đồ.
-     * Đối với Crypto & Commodity: dùng Binance.
+     * Đối với Crypto & Commodity: dùng Binance (hỗ trợ interval whitelist 1m, daily).
      * Đối với 8 mã cổ phiếu: dùng Alpha Vantage / Cache 24h qua StockMarketService.
      * Ném UnsupportedSymbolException (HTTP 422) nếu mã không hỗ trợ.
+     * Ném IllegalArgumentException (HTTP 400) nếu interval không nằm trong whitelist.
      * Ném MarketDataUnavailableException (HTTP 503) nếu provider lỗi và không có cache nến thật.
      * Tuyệt đối KHÔNG sinh nến giả (zero-fake).
      */
     public List<CandleDto> getCandles(String symbol, String interval) {
         MarketSymbolConfig.validateSupported(symbol);
         String canonicalSymbol = MarketSymbolConfig.getCanonicalSymbol(symbol);
+        String normalizedInterval = normalizeInterval(interval);
 
         if (MarketSymbolConfig.isStock(canonicalSymbol)) {
+            if (!"daily".equals(normalizedInterval)) {
+                throw new IllegalArgumentException("Cổ phiếu chỉ hỗ trợ khung thời gian daily (ngày). Khung thời gian yêu cầu không hợp lệ: " + interval);
+            }
             if (stockMarketService != null) {
                 return stockMarketService.getStockCandles(canonicalSymbol);
             }
             throw new MarketDataUnavailableException("Dịch vụ nến cổ phiếu chưa sẵn sàng cho mã: " + canonicalSymbol);
         }
 
+        String binanceInterval = "1m".equals(normalizedInterval) ? "1m" : "1d";
         MarketSymbolConfig.SymbolMeta meta = MarketSymbolConfig.getMeta(canonicalSymbol);
 
-        String cacheKey = canonicalSymbol + "_" + (interval != null ? interval.toLowerCase() : "daily");
+        String cacheKey = canonicalSymbol + "_" + normalizedInterval;
 
         try {
-            List<CandleDto> candles = binanceMarketClient.fetchKlines(meta.binanceSymbol(), interval, 30);
+            List<CandleDto> candles = binanceMarketClient.fetchKlines(meta.binanceSymbol(), binanceInterval, 30);
             if (!candles.isEmpty()) {
                 candleCache.put(cacheKey, candles);
                 return candles;

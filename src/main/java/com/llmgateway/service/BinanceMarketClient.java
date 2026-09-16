@@ -161,7 +161,10 @@ public class BinanceMarketClient {
         }
 
         List<CandleDto> list = new ArrayList<>();
-        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+        boolean is1m = "1m".equalsIgnoreCase(interval);
+        DateTimeFormatter formatter = is1m
+                ? DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+                : DateTimeFormatter.ofPattern("yyyy-MM-dd");
 
         for (JsonNode kline : root) {
             long openTimeMs = kline.get(0).asLong();
@@ -174,7 +177,7 @@ public class BinanceMarketClient {
             BigDecimal close = new BigDecimal(kline.get(4).asText()).setScale(2, RoundingMode.HALF_UP);
             BigDecimal volume = new BigDecimal(kline.get(5).asText()).setScale(2, RoundingMode.HALF_UP);
 
-            list.add(new CandleDto(timeStr, open, high, low, close, volume));
+            list.add(new CandleDto(timeStr, open, high, low, close, volume, openTimeMs));
         }
 
         return list;

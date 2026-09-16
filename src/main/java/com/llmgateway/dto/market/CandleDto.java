@@ -13,17 +13,23 @@ public class CandleDto {
     private BigDecimal low;      // Giá thấp nhất (Low)
     private BigDecimal close;    // Giá đóng cửa (Close)
     private BigDecimal volume;   // Khối lượng giao dịch (Volume)
+    private Long openTime;       // Thời gian mở nến (epoch millisecond)
 
     public CandleDto() {
     }
 
     public CandleDto(String time, BigDecimal open, BigDecimal high, BigDecimal low, BigDecimal close, BigDecimal volume) {
+        this(time, open, high, low, close, volume, null);
+    }
+
+    public CandleDto(String time, BigDecimal open, BigDecimal high, BigDecimal low, BigDecimal close, BigDecimal volume, Long openTime) {
         this.time = time;
         this.open = open;
         this.high = high;
         this.low = low;
         this.close = close;
         this.volume = volume;
+        this.openTime = openTime;
     }
 
     public String getTime() {
@@ -72,5 +78,13 @@ public class CandleDto {
 
     public void setVolume(BigDecimal volume) {
         this.volume = volume;
+    }
+
+    public Long getOpenTime() {
+        return openTime;
+    }
+
+    public void setOpenTime(Long openTime) {
+        this.openTime = openTime;
     }
 }

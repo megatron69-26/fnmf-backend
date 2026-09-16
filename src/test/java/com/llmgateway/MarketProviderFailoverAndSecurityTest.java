@@ -387,4 +387,90 @@ public class MarketProviderFailoverAndSecurityTest {
         assertNull(dto.getCurrentPrice(), "Khi market data lỗi, giá trong Watchlist phải trả về null");
         assertNull(dto.getChange24h(), "Khi market data lỗi, change24h phải trả về null");
     }
+
+    // =========================================================================
+    // 6. CANDLE INTERVAL WHITELIST & 1M REAL-TIME TESTS (HOTFIX v1.1.22)
+    // =========================================================================
+
+    @Test
+    @DisplayName("MarketDataService.normalizeInterval: Chỉ chấp nhận whitelist 1m, daily, 1d và từ chối interval tùy ý")
+    public void testMarketDataService_intervalWhitelistValidation() {
+        assertEquals("daily", MarketDataService.normalizeInterval(null));
+        assertEquals("daily", MarketDataService.normalizeInterval(""));
+        assertEquals("daily", MarketDataService.normalizeInterval("   "));
+        assertEquals("daily", MarketDataService.normalizeInterval("daily"));
+        assertEquals("daily", MarketDataService.normalizeInterval("DAILY"));
+        assertEquals("daily", MarketDataService.normalizeInterval("1d"));
+        assertEquals("daily", MarketDataService.normalizeInterval("1D"));
+        assertEquals("1m", MarketDataService.normalizeInterval("1m"));
+        assertEquals("1m", MarketDataService.normalizeInterval("1M"));
+
+        // Interval không hợp lệ phải ném IllegalArgumentException
+        assertThrows(IllegalArgumentException.class, () -> MarketDataService.normalizeInterval("5m"));
+        assertThrows(IllegalArgumentException.class, () -> MarketDataService.normalizeInterval("15m"));
+        assertThrows(IllegalArgumentException.class, () -> MarketDataService.normalizeInterval("hourly"));
+        assertThrows(IllegalArgumentException.class, () -> MarketDataService.normalizeInterval("random"));
+    }
+
+    @Test
+    @DisplayName("MarketDataService.getCandles: Tách biệt cache theo symbol và interval, truyền đúng 1m sang Binance")
+    public void testMarketDataService_getCandles1mAndCacheSeparation() throws Exception {
+        BinanceMarketClient mockBinance = mock(BinanceMarketClient.class);
+        MarketDataService service = new MarketDataService(objectMapper, mockBinance);
+
+        long now = 1789503660000L;
+        com.llmgateway.dto.market.CandleDto candle1m = new com.llmgateway.dto.market.CandleDto(
+                "2026-09-16 14:30:00",
+                new BigDecimal("65000.00"), new BigDecimal("65100.00"),
+                new BigDecimal("64950.00"), new BigDecimal("65050.00"),
+                new BigDecimal("12.50"), now
+        );
+        com.llmgateway.dto.market.CandleDto candleDaily = new com.llmgateway.dto.market.CandleDto(
+                "2026-09-16",
+                new BigDecimal("64000.00"), new BigDecimal("66000.00"),
+                new BigDecimal("63500.00"), new BigDecimal("65050.00"),
+                new BigDecimal("1200.00"), now
+        );
+
+        when(mockBinance.fetchKlines("BTCUSDT", "1m", 30)).thenReturn(List.of(candle1m));
+        when(mockBinance.fetchKlines("BTCUSDT", "1d", 30)).thenReturn(List.of(candleDaily));
+
+        List<com.llmgateway.dto.market.CandleDto> result1m = service.getCandles("BTCUSDT", "1m");
+        assertEquals(1, result1m.size());
+        assertEquals("2026-09-16 14:30:00", result1m.get(0).getTime());
+        assertEquals(now, result1m.get(0).getOpenTime());
+
+        List<com.llmgateway.dto.market.CandleDto> resultDaily = service.getCandles("BTCUSDT", "daily");
+        assertEquals(1, resultDaily.size());
+        assertEquals("2026-09-16", resultDaily.get(0).getTime());
+
+        // Từ chối interval không hợp lệ
+        assertThrows(IllegalArgumentException.class, () -> service.getCandles("BTCUSDT", "5m"));
+    }
+
+    @Test
+    @DisplayName("MarketDataService.getCandles: Cổ phiếu chỉ hỗ trợ daily, từ chối random và 1m trước khi gọi StockMarketService")
+    public void testStockCandles_rejectNonDailyIntervalsBeforeCallingProvider() {
+        com.llmgateway.service.StockMarketService mockStockService = mock(com.llmgateway.service.StockMarketService.class);
+        BinanceMarketClient mockBinance = mock(BinanceMarketClient.class);
+        MarketDataService service = new MarketDataService(objectMapper, mockBinance, mockStockService);
+
+        // 1. Cổ phiếu với interval="random" -> ném IllegalArgumentException
+        IllegalArgumentException exRandom = assertThrows(
+                IllegalArgumentException.class,
+                () -> service.getCandles("AAPL", "random")
+        );
+        assertTrue(exRandom.getMessage().contains("Khoảng thời gian không hợp lệ"));
+
+        // 2. Cổ phiếu với interval="1m" -> ném IllegalArgumentException
+        IllegalArgumentException ex1m = assertThrows(
+                IllegalArgumentException.class,
+                () -> service.getCandles("AAPL", "1m")
+        );
+        assertTrue(ex1m.getMessage().contains("Cổ phiếu chỉ hỗ trợ khung thời gian daily"));
+
+        // Xác minh StockMarketService tuyệt đối KHÔNG bị gọi khi interval sai
+        verify(mockStockService, never()).getStockCandles(anyString());
+        verifyNoInteractions(mockBinance);
+    }
 }
