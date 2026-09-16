@@ -6,107 +6,74 @@ Tai lieu doc ma nguon theo luong nghiep vu: [FNMF Codebase Walkthrough](docs/cod
 *Backend REST API, High-Integrity Financial Data Pipeline & AI Processing Layer*
 
 - **Nguoi thuc hien:** Dang Duc Khoi (Backend & Data Developer)
-- **Cong nghe cot loi:** Java 17, Spring Boot 3.3.5, Spring Data JPA, H2 Database (Local Dev/Test voi che do MODE=PostgreSQL) / PostgreSQL (Railway Production), Flyway Migrations (V1 - V8), Spring Security (BCrypt), JJWT, Binance REST API (Klines) & Binance WebSocket, Alpha Vantage API (News Sentiment), Google Gemini AI (OpenAI-compatible protocol voi model gemini-3.6-flash), OpenAPI 3.0 / Swagger UI (Dev/Local only; bi ProductionSecurityFilter chan tren Production).
+- **Cong nghe cot loi:** Java 17, Spring Boot 3.3.5, Spring Data JPA, H2 Database (Local Dev/Test) / PostgreSQL (Railway Production), Flyway Migrations (V1 - V10), Spring Security (BCrypt), JJWT, Binance REST & WebSocket, Alpaca Market Data API (IEX Feed, sort=desc newest bars), Twelve Data API, Google Gemini AI (3 Shards độc lập), OpenAPI 3.0.
 - **Base URL Local:** `http://localhost:8083`
 - **Base URL Production (Railway):** `https://fnmf-backend-production.up.railway.app/`
 - **Swagger UI (Local Dev):** `http://localhost:8083/swagger-ui.html`
 
 ---
 
-## 1. Bang anh xa Module, Endpoint & File ma nguon
+## 1. Kiến Trúc Fixed Provider Sharding & Gemini AI Shards (v1.1.23)
 
-| Module | Chuc nang | Phuong thuc & Duong dan API | File Controller & Service |
+Hệ thống định tuyến dữ liệu cố định (Fixed Provider Sharding) đối xứng 1-to-1 giữa Nhà cung cấp dữ liệu thị trường và Shard Gemini AI:
+
+| Phân Nhóm Tài Sản | Danh Mục Mã | Nhà Cung Cấp Dữ Liệu | Gemini AI Shard | Đặc Tả Kỹ Thuật |
+| :--- | :--- | :--- | :--- | :--- |
+| **Crypto & Vàng** (3 mã) | `BTCUSDT`, `ETHUSDT`, `XAUUSD` | **Binance** | **Shard 1** (`GEMINI_SHARD_1`) | REST Klines + WebSocket tick real-time |
+| **Cổ Phiếu Mỹ Nhóm A** (4 mã) | `AAPL`, `MSFT`, `NVDA`, `GOOGL` | **Alpaca** | **Shard 2** (`GEMINI_SHARD_2`) | IEX feed, `sort=desc`, window 5d/90d lấy 30 nến mới nhất |
+| **Cổ Phiếu Mỹ Nhóm B** (4 mã) | `TSLA`, `AMZN`, `META`, `JPM` | **Twelve Data** | **Shard 3** (`GEMINI_SHARD_3`) | `/time_series` intraday 1m & daily |
+
+### Quy Tắc Bất Biến Về Độ Tin Cậy & Bảo Mật:
+1. **Zero Fake Data:** Không tự bịa nến, giá giả hay tin tức giả. Khi provider lỗi $\to$ trả HTTP 503 hoặc cache cũ kèm `stale=true`.
+2. **Cấm Fallback Chéo Shard:** Khi một Gemini Shard gặp sự cố (403, 503, thiếu key), hệ thống **fail-closed** ngay với `FORECAST_UNAVAILABLE`. Tuyệt đối không gọi chéo sang shard khác.
+3. **Bảo Vệ Polling Retry (24h Cooldown):** `StockMarketService` lưu `geminiAttemptTimestampMap`. Khuyến nghị AI (kể cả khi thất bại/null) được giữ trong 24h, ngăn việc vòng lặp polling 60s của client gọi lại Gemini liên tục.
+4. **Phân Tách Bộ Nhớ Đệm (Cache Isolation):**
+   - **Giá Real-time:** 30 giây (`FixedMarketCacheManager.PRICE_TTL_MS`)
+   - **Nến 1 phút:** 60 giây (`CANDLE_1M_TTL_MS`)
+   - **Nến ngày (Daily):** 6 giờ (`CANDLE_DAILY_TTL_MS`)
+   - **Tin tức thực tế:** 6 giờ (`NEWS_TTL_MS`)
+   - **Dự báo AI CSDL:** 15 phút (`ForecastCacheService.FORECAST_CACHE_MINUTES`)
+   - **Khuyến nghị AI:** 24 giờ (`StockMarketService.RECOMMENDATION_TTL_MS`)
+
+---
+
+## 2. Bảng Ánh Xạ Module, Endpoint & Mã Nguồn
+
+| Module | Chức năng | Phương thức & Đường dẫn API | File Controller & Service |
 | :--- | :--- | :--- | :--- |
-| **Auth** | Dang ky tai khoan Email-only | `POST /api/auth/register` | `AuthController.java` / `AuthService.java` |
-| **Auth** | Dang nhap tai khoan & Nhan JWT | `POST /api/auth/login` | `AuthController.java` / `AuthService.java` |
-| **Auth** | Xem thong tin User & So du | `GET /api/auth/me` | `AuthController.java` / `AuthService.java` |
-| **Market** | Gia thi truong thoi gian thuc (BTC, ETH, Vang) | `GET /api/market/prices` | `MarketController.java` / `MarketDataService.java` |
-| **Market** | Gia mot ma cu the (Authoritative check) | `GET /api/market/price/{symbol}` | `MarketController.java` / `MarketDataService.java` |
-| **Market** | Chuoi nen that tu Binance Klines | `GET /api/market/candles?symbol=BTCUSDT` | `MarketController.java` / `MarketDataService.java` |
-| **Market** | Tin tuc tai chinh goc tu Alpha Vantage | `GET /api/market/news?limit=10` | `MarketController.java` / `MarketDataService.java` |
-| **AI News** | Pipeline AI News tu dong (Alpha Vantage + Gemini) | `GET /api/news/feed?limit=5` | `NewsAiController.java` / `AiNewsService.java` |
-| **AI News** | Phan tich bai bao bat ky bang AI | `POST /api/news/analyze` | `NewsAiController.java` / `AiNewsService.java` |
-| **AI News** | Xem Cache bai bao trong CSDL | `GET /api/news/cache` | `NewsAiController.java` / `AiNewsService.java` |
-| **AI News** | Dong bo bai bao phuc vu Mobile & Room DB | `GET /api/news/sync` | `NewsAiController.java` / `AiNewsService.java` |
-| **Watchlist** | Lay danh muc theo doi cua User | `GET /api/watchlist` | `WatchlistController.java` / `WatchlistService.java` |
-| **Watchlist** | Ban tin AI chuyen sau cho cac ma Watchlist | `GET /api/watchlist/ai-insights` | `WatchlistController.java` / `WatchlistService.java` |
-| **Watchlist** | Them ma vao danh muc theo doi | `POST /api/watchlist` | `WatchlistController.java` / `WatchlistService.java` |
-| **Watchlist** | Xoa ma khoi danh muc theo doi | `DELETE /api/watchlist/{symbol}` | `WatchlistController.java` / `WatchlistService.java` |
-| **Trade** | Dat lenh Paper Trading (Pessimistic Lock & Idempotency) | `POST /api/trade/order` | `TradeController.java` / `TradeService.java` |
-| **Trade** | Tong quan tai san & PnL thoi gian thuc | `GET /api/trade/portfolio` | `TradeController.java` / `TradeService.java` |
-| **Trade** | Lich su cac lenh da khop | `GET /api/trade/history` | `TradeController.java` / `TradeService.java` |
-| **Forecast** | Du bao xu huong & Tin hieu AI cho mot ma | `GET /api/forecast/{symbol}?timeframe=24H_7D` | `ForecastController.java` / `ForecastService.java` |
-| **Forecast** | Tao / Lam moi ban du bao AI | `POST /api/forecast/analyze` | `ForecastController.java` / `ForecastService.java` |
-| **Forecast** | Lich su cac ban du bao AI cua ma | `GET /api/forecast/history/{symbol}` | `ForecastController.java` / `ForecastService.java` |
-| **Forecast** | Danh sach cac ban du bao AI moi nhat | `GET /api/forecast/latest` | `ForecastController.java` / `ForecastService.java` |
-| **Payment** | Tao yeu cau nap tien Sandbox | `POST /api/payments/deposits` | `PaymentController.java` / `PaymentService.java` |
-| **Payment** | Tao yeu cau rut tien Sandbox | `POST /api/payments/withdrawals` | `PaymentController.java` / `PaymentService.java` |
-| **Payment** | Lay danh sach giao dich nap rut | `GET /api/payments` | `PaymentController.java` / `PaymentService.java` |
-| **Payment** | Chi tiet don hang nap rut | `GET /api/payments/{id}` | `PaymentController.java` / `PaymentService.java` |
-| **Payment** | Huy don hang nap rut dang cho | `POST /api/payments/{id}/cancel` | `PaymentController.java` / `PaymentService.java` |
-| **Payment UI** | Giao dien Hosted Checkout Sandbox | `GET /sandbox-bank/checkout/{token}` | `SandboxBankCheckoutController.java` |
-| **Payment UI** | Xu ly thanh toan Sandbox tu trinh duyet | `POST /sandbox-bank/checkout/process` | `SandboxBankCheckoutController.java` |
+| **Auth** | Đăng ký tài khoản Email-only | `POST /api/auth/register` | `AuthController.java` / `AuthService.java` |
+| **Auth** | Đăng nhập tài khoản & Nhận JWT | `POST /api/auth/login` | `AuthController.java` / `AuthService.java` |
+| **Auth** | Xem thông tin User & Số dư | `GET /api/auth/me` | `AuthController.java` / `AuthService.java` |
+| **Market** | Giá thị trường thời gian thực (Crypto & Vàng) | `GET /api/market/prices` | `MarketController.java` / `MarketDataService.java` |
+| **Market** | Giá một mã cụ thể (Authoritative check) | `GET /api/market/price/{symbol}` | `MarketController.java` / `MarketDataService.java` |
+| **Market** | Chuỗi nến thật (1m / daily) cho tất cả tài sản | `GET /api/market/candles?symbol={symbol}&interval=1m` | `MarketController.java` / `MarketDataService.java` |
+| **Stocks** | Danh mục 8 cổ phiếu tĩnh (Zero provider call) | `GET /api/stocks` | `StockController.java` / `StockMarketService.java` |
+| **Stocks** | Chi tiết cổ phiếu (Giá, nến, tin tức, khuyến nghị) | `GET /api/stocks/{symbol}` | `StockController.java` / `StockMarketService.java` |
+| **AI News** | Pipeline AI News tự động (PostgreSQL cache) | `GET /api/news/feed?limit=5` | `NewsAiController.java` / `AiNewsService.java` |
+| **Watchlist** | Lấy / Thêm / Xóa danh mục theo dõi | `GET / POST / DELETE /api/watchlist` | `WatchlistController.java` / `WatchlistService.java` |
+| **Trade** | Đặt lệnh Paper Trading (Pessimistic Lock & Idempotency) | `POST /api/trade/order` | `TradeController.java` / `TradeService.java` |
+| **Trade** | Danh mục tài sản & Lịch sử lệnh | `GET /api/trade/portfolio`, `GET /api/trade/history` | `TradeController.java` / `TradeService.java` |
+| **Forecast** | Dự báo AI xu hướng đa chiều (`analysisSource=GEMINI`) | `GET /api/forecast/{symbol}?timeframe=24H_7D` | `ForecastController.java` / `ForecastService.java` |
+| **Payment** | Nạp / Rút tiền VNPay Sandbox Banking | `POST /api/payments/deposits`, `POST /api/payments/withdrawals` | `PaymentController.java` / `PaymentService.java` |
 
 ---
 
-## 2. Cau truc Co so du lieu & Quan ly Migration (Flyway)
+## 3. Cơ Sở Dữ Liệu & Quản Lý Migration (Flyway V1 - V10)
 
-He thong ho tro hai moi truong co so du lieu:
-- **Local Development / Test:** H2 Database in-memory che do PostgreSQL (`jdbc:h2:mem:fnmf;DB_CLOSE_DELAY=-1;MODE=PostgreSQL`).
-- **Production (Railway):** PostgreSQL quan ly tap trung qua cac migration Flyway tu dong (V1 den V8):
-  - `V1__init_schema.sql`: Khoi tao bang nguoi dung, vi von, danh muc nam giu, lich su giao dich, watchlist, cache tin tuc va du bao thi truong.
-  - `V2__normalize_and_enforce_user_email.sql`: Chuan hoa mo hinh email-only va rang buoc duy nhat `LOWER(email)`.
-  - `V3__holding_unique_constraint_and_client_order_id.sql`: Rang buoc duy nhat `(WALLET_ID, SYMBOL)` chong nhan doi tai san va cot `CLIENT_ORDER_ID` chong trung lap lenh dong thoi.
-  - `V4__add_payment_orders_and_checkout_token.sql`: Khoi tao bang `PAYMENT_ORDERS` va co che checkout token cho Sandbox Banking.
-  - `V5__add_wallet_ledger_audit.sql`: Khoi tao bang so cai bien dong so du bat bien `WALLET_LEDGER`.
-  - `V6__add_payment_events_and_scale_guards.sql`: Bo sung bang luu vet su kien `PAYMENT_EVENTS` va rang buoc scale so tien.
-  - `V7__harden_payment_flow_and_order_indexes.sql`: Thiet lap chi muc va kiem soat het han 15 phut cho giao dich payment.
-  - `V8__add_forecast_source_and_metadata.sql`: Bo sung cot phan loai nguon du bao (`source`), metadata phan tich va cac chi so chat luong forecast.
-
-Chi tiet 10 bang du lieu trong CSDL:
-1. `USERS`: Luu tru tai khoan email-only, phan quyen (`USER` / `ADMIN`), mat khau bam BCrypt.
-2. `WALLETS`: Luu tru vi von ao, so du kha dung va von khoi tao ($10,000.00). Khoa bi quan (`PESSIMISTIC_WRITE`) khi dat lenh va nap rut.
-3. `HOLDINGS`: Danh muc tai san ao dang nam giu (`BTCUSDT`, `ETHUSDT`, `XAUUSD`). Khoa bi quan va rang buoc duy nhat `(WALLET_ID, SYMBOL)`.
-4. `TRANSACTIONS`: Lich su cac lenh Mua/Ban khop lenh thoi gian thuc, luu `CLIENT_ORDER_ID` de bao dam Idempotency.
-5. `WATCHLISTS`: Danh muc theo doi yeu thich cua tung nguoi dung (Cloud CRUD), phan tach doc lap theo `USER_ID`.
-6. `NEWS_AI_CACHE`: Bo nho dem luu tru bai bao va ket qua tom tat (2-4 bullet) / phan tich tam ly tu Gemini AI.
-7. `MARKET_FORECASTS`: Bang luu tru cac ban du bao xu huong, vung ho tro/khang cu va khuyen nghi tu AI (Cache 15 phut).
-8. `PAYMENT_ORDERS`: Don hang nap/rut tien Sandbox, trang thai (`PENDING`, `PROCESSING`, `SUCCEEDED`, `FAILED`, `CANCELLED`), token thanh toan co han 15 phut.
-9. `WALLET_LEDGER`: So cai bien dong so du don (single-entry append-only ledger), luu moi giao dich lam thay doi so du vi.
-10. `PAYMENT_EVENTS`: Nhat ky su kien thanh toan phuc vu truy vet kiem toan va dam bao tinh luy thua.
+- **V1__init_schema.sql:** Khởi tạo bảng người dùng, ví vốn, danh mục nắm giữ, lịch sử giao dịch, watchlist, cache tin tức và dự báo thị trường.
+- **V2__normalize_and_enforce_user_email.sql:** Chuẩn hóa email-only và ràng buộc `LOWER(email)`.
+- **V3__holding_unique_constraint_and_client_order_id.sql:** Ràng buộc `(WALLET_ID, SYMBOL)` chống nhân đôi tài sản, `CLIENT_ORDER_ID` chống trùng lặp lệnh.
+- **V4__add_payment_orders_and_checkout_token.sql:** Khởi tạo bảng `PAYMENT_ORDERS` và checkout token.
+- **V5__add_wallet_ledger_audit.sql:** Sổ cái biến động số dư bất biến `WALLET_LEDGER`.
+- **V6__add_payment_events_and_scale_guards.sql:** Bảng lưu vết sự kiện `PAYMENT_EVENTS` và kiểm soát scale số tiền.
+- **V7__harden_payment_flow_and_order_indexes.sql:** Chỉ mục thanh toán và kiểm soát hết hạn giao dịch.
+- **V8__add_forecast_source_and_metadata.sql:** Cột phân loại nguồn dự báo (`source`), metadata phân tích và chỉ số chất lượng forecast.
+- **V9__add_vnpay_fields_to_payment_orders.sql:** Bổ sung trường phục vụ VNPay Sandbox Payment Gateway.
+- **V10__add_ai_shard_to_market_forecasts.sql:** Bổ sung cột `ai_shard VARCHAR(50)` vào bảng `market_forecasts` để kiểm toán và bảo toàn Shard AI xuyên suốt DB cache.
 
 ---
 
-## 3. Co che Bao dam Toan ven Du lieu & Chinh sach Khong Su dung Du lieu Gia (Zero-Fake Policy)
-
-1. **Nguon du lieu thi truong Authoritative:**
-   - Gia va nen thoi gian thuc lay truc tiep tu Binance REST API (`/api/v3/ticker/24hr`, `/api/v3/klines`).
-   - Android client mo ket noi Binance WebSocket de nhan tick gia live cap nhat bieu do.
-2. **Chinh sach Symbol Hop le & Loai bo USOIL:**
-   - Cac ma hop le: `BTCUSDT`, `ETHUSDT`, `XAUUSD` (tham chieu `PAXGUSDT`).
-   - Ma `USOIL` va cac ma khong ho tro bi tu choi hoan toan voi HTTP 422 `UNSUPPORTED_SYMBOL`. Tuyet doi khong bao gio fallback ve BTC.
-3. **Xoa bo hoan toan Mock va Random Data tren Production:**
-   - Da loai bo triet de cac ham sinh nen toan hoc mo phong, `Math.random()` va gia hardcode tren production backend.
-   - Khi mat ket noi nha cung cap va chua tung co cache that: Tra ve HTTP 503 `DATA_UNAVAILABLE`.
-   - Neu co cache that cua chinh ma do: Tra ve cache that cuoi cung kem co `stale=true`.
-4. **Idempotency & Khoa giao dich dong thoi (Pessimistic Locking):**
-   - Dat lenh va nap rut tien su dung `@Lock(LockModeType.PESSIMISTIC_WRITE)` tren `Wallet` va `Holding` de ngan ngua race condition khi nhieu request gui dong thoi.
-   - Ho tro `clientOrderId` (UUID): Tu dong phat hien va replay ket qua lenh cu neu nhan trung ma yeu cau, khong tru tien hai lan.
-5. **Pipeline AI News chat che (Alpha Vantage -> Gemini -> PostgreSQL -> Room DB):**
-   - Lay tin that tu Alpha Vantage `NEWS_SENTIMENT`.
-   - Gui sang Google Gemini AI (`gemini-3.6-flash`) qua OpenAI-compatible endpoint de dich tieu de va tom tat 2 den 4 bullet tieng Viet, gan nhan tam ly va ly do danh gia.
-   - Luu ket qua vao bang `NEWS_AI_CACHE` trong PostgreSQL de tai su dung, giam chi phi va do tre.
-   - Android dong bo tin tuc va luu vao Room DB tren may, ho tro doc offline khi mat ket noi.
-6. **Bao mat Production:**
-   - Tren profile `prod`, `ProductionSecurityFilter` chan toan bo Swagger UI, OpenAPI spec, H2 Console va endpoint diagnostics bang HTTP 404.
-   - Mat khau keystore, API keys va thong tin nhay cam khong duoc commit vao repository hoac in ra log.
-
----
-
-## 4. Hotfix sau phát hành v1.1.18
-
-Sau khi phát hành phiên bản v1.1.18, hệ thống backend đã thực hiện các hotfix bổ sung sau:
-- Commit `20b25a1`: Rút gọn nội dung Forecast. Giới hạn độ dài nhận định kỹ thuật (`technicalOutlook` tối đa 140 ký tự), nhận định cơ bản (`fundamentalOutlook` tối đa 140 ký tự) và đúng 3 yếu tố dẫn dắt chính (`keyDrivers`, mỗi ý tối đa 85 ký tự) để hiển thị phù hợp trên giao diện ứng dụng di động Android.
-- Commit `3dffc56`: Làm sạch thông báo lỗi và log provider. Loại bỏ nội dung lỗi thô và chi tiết nhà cung cấp khỏi nhật ký máy chủ và phản hồi client.
-- Commit `527e455`: Ngừng vòng xử lý News khi Gemini trả 429. Ngắt ngay vòng lặp khi gặp mã 429 (`break`), kích hoạt thời gian chờ (cooldown) và ưu tiên phục vụ dữ liệu đã lưu trong cơ sở dữ liệu để bảo vệ hạn ngạch cho Forecast.
-- Triển khai Railway Production: Mã triển khai `bc3e787b-ffb1-4e6f-b784-d7b02c1698ae` đạt trạng thái `SUCCESS` (triển khai trực tiếp qua Railway CLI nên bảng điều khiển không gắn commit SHA). Nhật ký vận hành xác nhận cơ chế ngắt vòng lặp khi gặp lỗi 429 (`break-on-429`) đã hoạt động trong phiên điều phối thực tế; không suy diễn thành bằng chứng đối chiếu cho toàn bộ mã nguồn.
+## 4. Kiểm Thử & Xác Minh Độc Lập (v1.1.23)
+- **Targeted Unit Tests:** `FixedProviderShardingTest` đạt 17/17 PASS.
+- **Toàn Bộ Test Suite:** 234/234 test PASS (`mvn test`).
+- **Production Deployment:** Hoàn tất triển khai trên Railway (`SUCCESS`). Migration V10 đã áp dụng thành công trên PostgreSQL.
