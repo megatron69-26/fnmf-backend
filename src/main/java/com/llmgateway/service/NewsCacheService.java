@@ -9,6 +9,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
@@ -33,11 +34,14 @@ public class NewsCacheService {
     @Transactional(readOnly = true)
     public List<NewsAiCache> findTopByOrderByPublishedAtDesc(int limit) {
         int max = limit > 0 ? limit : 5;
-        List<NewsAiCache> list = repository.findTop10ByOrderByPublishedAtDesc();
-        if (list.size() > max) {
+        List<NewsAiCache> list = repository.findTop50ByOrderByPublishedAtDesc();
+        if (list == null || list.isEmpty()) {
+            list = repository.findTop10ByOrderByPublishedAtDesc();
+        }
+        if (list != null && list.size() > max) {
             return list.subList(0, max);
         }
-        return list;
+        return list != null ? list : Collections.emptyList();
     }
 
     @Transactional(readOnly = true)

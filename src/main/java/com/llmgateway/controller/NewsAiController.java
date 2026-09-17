@@ -95,7 +95,16 @@ public class NewsAiController {
             Map<String, Object> statusResp = new HashMap<>();
             statusResp.put("status", syncResult.getStatus());
             statusResp.put("message", syncResult.getMessage());
-            statusResp.put("data", Collections.emptyList());
+            statusResp.put("stale", syncResult.isStale());
+            statusResp.put("fromCache", syncResult.isFromCache());
+            statusResp.put("dataAsOf", syncResult.getDataAsOf());
+            statusResp.put("latestPublishedAt", syncResult.getLatestPublishedAt());
+            List<NewsFeedItemDto> items = syncResult.getItems();
+            if (items != null && !items.isEmpty()) {
+                statusResp.put("data", formatFeedItems(items, limit));
+            } else {
+                statusResp.put("data", Collections.emptyList());
+            }
             return ResponseEntity.ok(statusResp);
         }
 
@@ -104,6 +113,10 @@ public class NewsAiController {
             Map<String, Object> emptyResp = new HashMap<>();
             emptyResp.put("status", "empty");
             emptyResp.put("message", "Chưa có bản tin mới");
+            emptyResp.put("stale", syncResult.isStale());
+            emptyResp.put("fromCache", syncResult.isFromCache());
+            emptyResp.put("dataAsOf", syncResult.getDataAsOf());
+            emptyResp.put("latestPublishedAt", syncResult.getLatestPublishedAt());
             emptyResp.put("data", Collections.emptyList());
             return ResponseEntity.ok(emptyResp);
         }
@@ -111,6 +124,13 @@ public class NewsAiController {
         List<Map<String, Object>> data = formatFeedItems(feed, limit);
         Map<String, Object> response = new HashMap<>();
         response.put("status", "ok");
+        if (syncResult.getMessage() != null) {
+            response.put("message", syncResult.getMessage());
+        }
+        response.put("stale", syncResult.isStale());
+        response.put("fromCache", syncResult.isFromCache());
+        response.put("dataAsOf", syncResult.getDataAsOf());
+        response.put("latestPublishedAt", syncResult.getLatestPublishedAt());
         response.put("data", data);
         return ResponseEntity.ok(response);
     }
@@ -174,8 +194,17 @@ public class NewsAiController {
             response.put("usedRefreshes", quota.getUsedRefreshes());
             response.put("remainingRefreshes", quota.getRemainingRefreshes());
             response.put("quotaDate", quota.getQuotaDate());
+            response.put("stale", true);
+            response.put("fromCache", true);
+            String latestPub = (cachedItems != null && !cachedItems.isEmpty() && cachedItems.get(0).getTimePublished() != null)
+                    ? cachedItems.get(0).getTimePublished() : null;
+            String dataAsOf = (cachedItems != null && !cachedItems.isEmpty() && cachedItems.get(0).getAnalyzedAt() != null)
+                    ? cachedItems.get(0).getAnalyzedAt() : null;
+            response.put("dataAsOf", dataAsOf);
+            response.put("latestPublishedAt", latestPub);
             if (cachedItems != null && !cachedItems.isEmpty()) {
                 response.put("status", "ok");
+                response.put("message", "Đang hiển thị tin đã lưu gần nhất");
                 response.put("data", formatFeedItems(cachedItems, limit));
             } else {
                 response.put("status", "empty");
@@ -193,11 +222,20 @@ public class NewsAiController {
             response.put("usedRefreshes", quota.getUsedRefreshes());
             response.put("remainingRefreshes", quota.getRemainingRefreshes());
             response.put("quotaDate", quota.getQuotaDate());
+            response.put("stale", syncResult.isStale());
+            response.put("fromCache", syncResult.isFromCache());
+            response.put("dataAsOf", syncResult.getDataAsOf());
+            response.put("latestPublishedAt", syncResult.getLatestPublishedAt());
 
             if (!"ok".equals(syncResult.getStatus())) {
                 response.put("status", syncResult.getStatus());
                 response.put("message", syncResult.getMessage());
-                response.put("data", Collections.emptyList());
+                List<NewsFeedItemDto> items = syncResult.getItems();
+                if (items != null && !items.isEmpty()) {
+                    response.put("data", formatFeedItems(items, limit));
+                } else {
+                    response.put("data", Collections.emptyList());
+                }
                 return ResponseEntity.ok(response);
             }
 
@@ -211,6 +249,9 @@ public class NewsAiController {
 
             List<Map<String, Object>> data = formatFeedItems(feed, limit);
             response.put("status", "ok");
+            if (syncResult.getMessage() != null) {
+                response.put("message", syncResult.getMessage());
+            }
             response.put("data", data);
             return ResponseEntity.ok(response);
         } catch (Exception ex) {
@@ -218,6 +259,8 @@ public class NewsAiController {
             Map<String, Object> errResp = new HashMap<>();
             errResp.put("status", "degraded");
             errResp.put("message", "Dịch vụ xử lý tin tức tạm thời chưa sẵn sàng");
+            errResp.put("stale", true);
+            errResp.put("fromCache", true);
             errResp.put("data", Collections.emptyList());
             errResp.put("maxDailyRefreshes", quota.getMaxDailyRefreshes());
             errResp.put("usedRefreshes", quota.getUsedRefreshes());

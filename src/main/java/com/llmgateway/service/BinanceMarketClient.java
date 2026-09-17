@@ -155,9 +155,17 @@ public class BinanceMarketClient {
                 baseUrl -> buildKlinesUrl(baseUrl, binanceSymbol, interval, limit)
         );
 
-        JsonNode root = objectMapper.readTree(response.body());
+        return parseKlines(response.body(), interval);
+    }
+
+    public List<CandleDto> parseKlines(String jsonBody, String interval) throws Exception {
+        JsonNode root = objectMapper.readTree(jsonBody);
+        return parseKlines(root, interval);
+    }
+
+    public List<CandleDto> parseKlines(JsonNode root, String interval) {
         if (!root.isArray()) {
-            throw new IllegalStateException("Invalid Binance klines response for " + binanceSymbol);
+            throw new IllegalStateException("Invalid Binance klines response: root is not an array");
         }
 
         List<CandleDto> list = new ArrayList<>();
@@ -166,21 +174,71 @@ public class BinanceMarketClient {
                 ? DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
                 : DateTimeFormatter.ofPattern("yyyy-MM-dd");
 
+        Long prevOpenTimeMs = null;
+
         for (JsonNode kline : root) {
-            long openTimeMs = kline.get(0).asLong();
+            if (!kline.isArray() || kline.size() < 6) {
+                throw new IllegalArgumentException("Kline data item không hợp lệ hoặc thiếu trường OHLCV");
+            }
+
+            long openTimeMs = kline.get(0).asLong(-1L);
+            if (openTimeMs <= 0L) {
+                throw new IllegalArgumentException("openTime nến không hợp lệ: " + openTimeMs);
+            }
+
+            // openTime phải tăng dần nghiêm ngặt
+            if (prevOpenTimeMs != null && openTimeMs <= prevOpenTimeMs) {
+                throw new IllegalArgumentException("openTime nến không tăng dần nghiêm ngặt: prev="
+                        + prevOpenTimeMs + ", curr=" + openTimeMs);
+            }
+            prevOpenTimeMs = openTimeMs;
+
             LocalDateTime dateTime = LocalDateTime.ofInstant(Instant.ofEpochMilli(openTimeMs), ZoneId.systemDefault());
             String timeStr = dateTime.format(formatter);
 
-            BigDecimal open = new BigDecimal(kline.get(1).asText()).setScale(2, RoundingMode.HALF_UP);
-            BigDecimal high = new BigDecimal(kline.get(2).asText()).setScale(2, RoundingMode.HALF_UP);
-            BigDecimal low = new BigDecimal(kline.get(3).asText()).setScale(2, RoundingMode.HALF_UP);
-            BigDecimal close = new BigDecimal(kline.get(4).asText()).setScale(2, RoundingMode.HALF_UP);
-            BigDecimal volume = new BigDecimal(kline.get(5).asText()).setScale(2, RoundingMode.HALF_UP);
+            BigDecimal open = parsePriceScale(kline.get(1).asText(null));
+            BigDecimal high = parsePriceScale(kline.get(2).asText(null));
+            BigDecimal low = parsePriceScale(kline.get(3).asText(null));
+            BigDecimal close = parsePriceScale(kline.get(4).asText(null));
+
+            String volumeText = kline.get(5).asText(null);
+            if (volumeText == null || volumeText.isBlank()) {
+                throw new IllegalArgumentException("Volume nến không được để trống");
+            }
+            BigDecimal volume = new BigDecimal(volumeText.trim()).stripTrailingZeros();
+            if (volume.compareTo(BigDecimal.ZERO) < 0) {
+                throw new IllegalArgumentException("Volume nến không được âm: " + volumeText);
+            }
+
+            // Invariants OHLC:
+            // high >= low
+            // high >= open && high >= close
+            // low <= open && low <= close
+            if (high.compareTo(low) < 0) {
+                throw new IllegalArgumentException("Vi phạm OHLC: high < low (high=" + high + ", low=" + low + ")");
+            }
+            if (high.compareTo(open) < 0 || high.compareTo(close) < 0) {
+                throw new IllegalArgumentException("Vi phạm OHLC: high nhỏ hơn open hoặc close (high=" + high + ", open=" + open + ", close=" + close + ")");
+            }
+            if (low.compareTo(open) > 0 || low.compareTo(close) > 0) {
+                throw new IllegalArgumentException("Vi phạm OHLC: low lớn hơn open hoặc close (low=" + low + ", open=" + open + ", close=" + close + ")");
+            }
 
             list.add(new CandleDto(timeStr, open, high, low, close, volume, openTimeMs));
         }
 
         return list;
+    }
+
+    public static BigDecimal parsePriceScale(String rawText) {
+        if (rawText == null || rawText.isBlank()) {
+            throw new IllegalArgumentException("Giá nến không được để trống (Zero-Fake cấm)");
+        }
+        BigDecimal val = new BigDecimal(rawText.trim()).stripTrailingZeros();
+        if (val.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new IllegalArgumentException("Giá nến phải lớn hơn 0, cấm giá <= 0: " + rawText);
+        }
+        return val;
     }
 
     /**

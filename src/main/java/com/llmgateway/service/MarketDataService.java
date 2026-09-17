@@ -251,6 +251,18 @@ public class MarketDataService {
         return priceCache;
     }
 
+    public MarketPriceDto getCachedPrice(String symbol) {
+        if (symbol == null || symbol.isBlank()) {
+            return null;
+        }
+        try {
+            String canonical = MarketSymbolConfig.getCanonicalSymbol(symbol);
+            return priceCache.get(canonical);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     // =========================================================================
     // PRIVATE HELPER METHODS (ZERO FAKE DATA)
     // =========================================================================

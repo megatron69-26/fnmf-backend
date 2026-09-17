@@ -10,8 +10,12 @@ import jakarta.persistence.Table;
 
 import java.time.LocalDateTime;
 
+import jakarta.persistence.UniqueConstraint;
+
 @Entity
-@Table(name = "WATCHLISTS")
+@Table(name = "WATCHLISTS", uniqueConstraints = {
+        @UniqueConstraint(name = "uk_watchlists_user_symbol", columnNames = {"USER_ID", "SYMBOL"})
+})
 public class Watchlist {
 
     @Id

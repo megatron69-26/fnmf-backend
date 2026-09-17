@@ -18,5 +18,7 @@ public interface NewsAiCacheRepository extends JpaRepository<NewsAiCache, Long> 
 
     List<NewsAiCache> findTop10ByOrderByPublishedAtDesc();
 
+    List<NewsAiCache> findTop50ByOrderByPublishedAtDesc();
+
     List<NewsAiCache> findBySymbolOrderByPublishedAtDesc(String symbol);
 }

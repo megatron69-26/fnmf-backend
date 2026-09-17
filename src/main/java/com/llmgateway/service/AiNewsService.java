@@ -140,9 +140,11 @@ public class AiNewsService {
         // 3. Nếu đang trong thời gian Cooldown lỗi của Alpha Vantage
         if (alphaNewsCoordinator.isInCooldown()) {
             if (!cachedItems.isEmpty()) {
-                log.warn("Alpha Vantage đang trong thời gian cooldown ({}), trả cache tiếng Việt hiện có",
+                log.warn("Alpha Vantage đang trong thời gian cooldown ({}), trả cache tiếng Việt hiện có (STALE)",
                         alphaNewsCoordinator.getLastFailureCode());
-                return NewsSyncResult.ok(cachedItems);
+                String latestPublishedAt = cachedItems.get(0).getTimePublished();
+                String dataAsOf = cachedItems.get(0).getAnalyzedAt();
+                return NewsSyncResult.stale(cachedItems, "Đang hiển thị tin đã lưu gần nhất", dataAsOf, latestPublishedAt);
             }
             return NewsSyncResult.degraded("Dịch vụ xử lý tin tức tạm thời chưa sẵn sàng");
         }
@@ -153,8 +155,10 @@ public class AiNewsService {
         boolean lockAcquired = alphaNewsCoordinator.tryAcquireRefresh();
         if (!lockAcquired) {
             if (!cachedItems.isEmpty()) {
-                log.info("Request đồng thời đang làm mới dữ liệu, trả cache tiếng Việt hiện có cho luồng này");
-                return NewsSyncResult.ok(cachedItems);
+                log.info("Request đồng thời đang làm mới dữ liệu, trả cache tiếng Việt hiện có cho luồng này (STALE)");
+                String latestPublishedAt = cachedItems.get(0).getTimePublished();
+                String dataAsOf = cachedItems.get(0).getAnalyzedAt();
+                return NewsSyncResult.stale(cachedItems, "Đang hiển thị tin đã lưu gần nhất", dataAsOf, latestPublishedAt);
             }
             return NewsSyncResult.degraded("Dịch vụ xử lý tin tức tạm thời chưa sẵn sàng");
         }
@@ -166,18 +170,20 @@ public class AiNewsService {
                 return NewsSyncResult.ok(cachedItems);
             }
 
-            // Kiểm tra snapshot Alpha trong RAM
+            // Kiểm tra snapshot Alpha trong RAM (bắt buộc bỏ qua khi forceRefresh = true)
             AlphaNewsCoordinator.CachedAlphaSnapshot snapshot = alphaNewsCoordinator.getCachedSnapshot();
             List<NewsFeedItemDto> rawItemsToProcess = null;
             boolean needAlphaFetch = true;
 
-            if (snapshot != null && snapshot.isFresh(alphaNewsCoordinator.getClock(), alphaNewsCoordinator.getRefreshIntervalMinutes())
+            if (!forceRefresh && snapshot != null && snapshot.isFresh(alphaNewsCoordinator.getClock(), alphaNewsCoordinator.getRefreshIntervalMinutes())
                     && snapshot.matchesScope(requestedScope)) {
 
                 if (snapshot.getStatus() == AlphaNewsFetchResult.Status.SUCCESS_EMPTY) {
                     log.info("Snapshot Alpha xác nhận thị trường không có tin tức cho scope {}, replay empty", snapshot.getScope());
                     if (!cachedItems.isEmpty()) {
-                        return NewsSyncResult.ok(cachedItems);
+                        String latestPublishedAt = cachedItems.get(0).getTimePublished();
+                        String dataAsOf = cachedItems.get(0).getAnalyzedAt();
+                        return NewsSyncResult.emptyWithCache("Chưa có bản tin mới", cachedItems, dataAsOf, latestPublishedAt);
                     }
                     return NewsSyncResult.empty("Chưa có bản tin mới");
                 }
@@ -186,7 +192,9 @@ public class AiNewsService {
                     if (alphaNewsCoordinator.isGeminiInCooldown()) {
                         log.warn("Gemini đang trong thời gian cooldown sau lỗi trước đó, không gọi lại Gemini");
                         if (!cachedItems.isEmpty()) {
-                            return NewsSyncResult.ok(cachedItems);
+                            String latestPublishedAt = cachedItems.get(0).getTimePublished();
+                            String dataAsOf = cachedItems.get(0).getAnalyzedAt();
+                            return NewsSyncResult.stale(cachedItems, "Đang hiển thị tin đã lưu gần nhất", dataAsOf, latestPublishedAt);
                         }
                         return NewsSyncResult.degraded("Dịch vụ xử lý tin tức tạm thời chưa sẵn sàng");
                     }
@@ -203,7 +211,9 @@ public class AiNewsService {
                 if (alphaResult.getStatus() == AlphaNewsFetchResult.Status.UNAVAILABLE) {
                     alphaNewsCoordinator.recordFailure(alphaResult.getMessage());
                     if (!cachedItems.isEmpty()) {
-                        return NewsSyncResult.ok(cachedItems);
+                        String latestPublishedAt = cachedItems.get(0).getTimePublished();
+                        String dataAsOf = cachedItems.get(0).getAnalyzedAt();
+                        return NewsSyncResult.stale(cachedItems, "Đang hiển thị tin đã lưu gần nhất", dataAsOf, latestPublishedAt);
                     }
                     return NewsSyncResult.degraded("Dịch vụ xử lý tin tức tạm thời chưa sẵn sàng");
                 }
@@ -211,7 +221,9 @@ public class AiNewsService {
                 if (alphaResult.getStatus() == AlphaNewsFetchResult.Status.SUCCESS_EMPTY) {
                     alphaNewsCoordinator.recordAlphaSnapshot(requestedScope, AlphaNewsFetchResult.Status.SUCCESS_EMPTY, Collections.emptyList());
                     if (!cachedItems.isEmpty()) {
-                        return NewsSyncResult.ok(cachedItems);
+                        String latestPublishedAt = cachedItems.get(0).getTimePublished();
+                        String dataAsOf = cachedItems.get(0).getAnalyzedAt();
+                        return NewsSyncResult.emptyWithCache("Chưa có bản tin mới", cachedItems, dataAsOf, latestPublishedAt);
                     }
                     return NewsSyncResult.empty("Chưa có bản tin mới");
                 }
@@ -221,6 +233,7 @@ public class AiNewsService {
                 rawItemsToProcess = alphaResult.getItems();
             }
 
+            int newArticlesAdded = 0;
             List<NewsFeedItemDto> enrichedList = new ArrayList<>();
             if (rawItemsToProcess != null && !rawItemsToProcess.isEmpty()) {
                 for (NewsFeedItemDto rawItem : rawItemsToProcess) {
@@ -375,8 +388,9 @@ public class AiNewsService {
                                             displaySummary,
                                             objectMapper.writeValueAsString(rawItem.getBulletPointsVi())
                                     );
+                                    newArticlesAdded++;
                                 } catch (Exception e) {
-                                    log.warn("Không thể lưu cache: {}", e.getMessage());
+                                    log.warn("Không thể lưu cache: class={}", e.getClass().getSimpleName());
                                 }
                                 enrichedList.add(rawItem);
                             } else {
@@ -394,8 +408,24 @@ public class AiNewsService {
             }
 
             if (!enrichedList.isEmpty()) {
+                // Đảm bảo sắp xếp nghiêm ngặt theo publishedAt (timePublished) giảm dần
+                enrichedList.sort((a, b) -> {
+                    String t1 = a.getTimePublished() != null ? a.getTimePublished() : "";
+                    String t2 = b.getTimePublished() != null ? b.getTimePublished() : "";
+                    return t2.compareTo(t1);
+                });
+
                 alphaNewsCoordinator.recordPipelineSuccess();
                 alphaNewsCoordinator.recordGeminiSuccess();
+
+                // Nếu là forceRefresh nhưng Alpha Vantage không có bài mới hơn CSDL -> Báo 'Chưa có bản tin mới'
+                if (forceRefresh && newArticlesAdded == 0) {
+                    String latestPublishedAt = enrichedList.get(0).getTimePublished();
+                    String dataAsOf = enrichedList.get(0).getAnalyzedAt();
+                    log.info("Alpha Vantage fetch thành công nhưng không có bài mới hơn CSDL -> Trả 'Chưa có bản tin mới'");
+                    return NewsSyncResult.emptyWithCache("Chưa có bản tin mới", enrichedList, dataAsOf, latestPublishedAt);
+                }
+
                 return NewsSyncResult.ok(enrichedList);
             }
 
@@ -404,10 +434,12 @@ public class AiNewsService {
                 alphaNewsCoordinator.recordGeminiFailure();
             }
 
-            // Fallback sang cache CSDL nếu có
+            // Fallback sang cache CSDL nếu có (đánh dấu stale)
             List<NewsFeedItemDto> fallbackCache = getValidLocalizedCacheItems(symbol, limit);
             if (!fallbackCache.isEmpty()) {
-                return NewsSyncResult.ok(fallbackCache);
+                String latestPublishedAt = fallbackCache.get(0).getTimePublished();
+                String dataAsOf = fallbackCache.get(0).getAnalyzedAt();
+                return NewsSyncResult.stale(fallbackCache, "Đang hiển thị tin đã lưu gần nhất", dataAsOf, latestPublishedAt);
             }
 
             return NewsSyncResult.degraded("Dịch vụ xử lý tin tức tạm thời chưa sẵn sàng");
@@ -486,19 +518,36 @@ public class AiNewsService {
             return false;
         }
 
-        // Invariant 2: Xác định độ mới DUY NHẤT theo analyzedAt (thời điểm backend phân tích/lưu cache).
-        // Tuyệt đối không fallback sang publishedAt/timePublished vì tin cũ vẫn có thể vừa phân tích,
-        // và cache thiếu analyzedAt phải coi là STALE.
+        // Invariant 2: analyzedAt phải hợp lệ và nằm trong refreshIntervalMinutes của AlphaNewsCoordinator
         String firstAnalyzedAt = cacheList.get(0).getAnalyzedAt();
         if (firstAnalyzedAt == null || firstAnalyzedAt.isBlank()) {
             return false;
         }
         try {
             LocalDateTime analyzedTime = LocalDateTime.parse(firstAnalyzedAt);
-            return alphaNewsCoordinator.isCacheFresh(analyzedTime);
+            if (!alphaNewsCoordinator.isCacheFresh(analyzedTime)) {
+                return false;
+            }
         } catch (Exception ignored) {
             return false;
         }
+
+        // Invariant 3 (Blocker 3 Audit Fix): Kiểm tra thời điểm xuất bản (publishedAt / timePublished) của bài báo mới nhất.
+        // Bài viết xuất bản cũ (> 24 giờ so với hiện tại) kể cả vừa phân tích cũng phải coi là STALE để hệ thống làm mới.
+        String firstPublishedAt = cacheList.get(0).getTimePublished();
+        if (firstPublishedAt != null && !firstPublishedAt.isBlank()) {
+            LocalDateTime publishedTime = parseAlphaVantageTimestamp(firstPublishedAt);
+            if (publishedTime != null) {
+                LocalDateTime now = LocalDateTime.now(alphaNewsCoordinator.getClock());
+                if (publishedTime.isBefore(now.minusHours(24))) {
+                    log.info("Cache tin tức có bài mới nhất đã xuất bản cách đây quá 24 giờ (publishedAt={}, now={}), đánh dấu STALE",
+                            firstPublishedAt, now);
+                    return false;
+                }
+            }
+        }
+
+        return true;
     }
 
     public List<NewsFeedItemDto> getLiveAiNewsFeed(String symbol, int limit) {
@@ -606,7 +655,7 @@ public class AiNewsService {
                     objectMapper.writeValueAsString(aiResult.getSummary())
             );
         } catch (Exception e) {
-            log.error("Không thể lưu cache: {}", e.getMessage());
+            log.error("Không thể lưu cache: class={}", e.getClass().getSimpleName());
         }
 
         aiResult.setFromCache(false);
@@ -838,7 +887,7 @@ public class AiNewsService {
         } catch (GeminiRateLimitException gre) {
             throw gre;
         } catch (Exception e) {
-            log.warn("Lỗi khi gọi Gemini API: {}", e.getMessage());
+            log.warn("Lỗi khi gọi Gemini API: class={}", e.getClass().getSimpleName());
             return Optional.empty();
         }
     }
@@ -847,15 +896,19 @@ public class AiNewsService {
         if (timePublished == null || timePublished.isBlank()) {
             return null;
         }
+        String clean = timePublished.trim();
         try {
             DateTimeFormatter avFormatter = DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss");
-            return LocalDateTime.parse(timePublished, avFormatter);
+            return LocalDateTime.parse(clean, avFormatter);
         } catch (Exception ignored) {}
         try {
-            return LocalDateTime.parse(timePublished, DateTimeFormatter.ISO_DATE_TIME);
+            return LocalDateTime.parse(clean, DateTimeFormatter.ISO_LOCAL_DATE_TIME);
         } catch (Exception ignored) {}
         try {
-            return LocalDateTime.parse(timePublished, DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+            return LocalDateTime.parse(clean, DateTimeFormatter.ISO_DATE_TIME);
+        } catch (Exception ignored) {}
+        try {
+            return java.time.OffsetDateTime.parse(clean).toLocalDateTime();
         } catch (Exception ignored) {}
         return null;
     }

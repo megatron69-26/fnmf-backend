@@ -1515,7 +1515,7 @@ public class NewsServiceAndMigrationTest {
     }
 
     @Test
-    @DisplayName("44. Cache freshness: Xác định độ mới theo analyzedAt (thời điểm AI phân tích), kể cả publishedAt của bài báo đã cũ")
+    @DisplayName("44. Cache freshness: Kết hợp cả analyzedAt và publishedAt (bài báo xuất bản <= 24h và analyzedAt mới thì FRESH, bài xuất bản > 24h thì STALE)")
     public void testCacheFreshnessByAnalyzedAtEvenIfPublishedAtOld() throws Exception {
         java.net.http.HttpClient mockHttp = mock(java.net.http.HttpClient.class);
         ReflectionTestUtils.setField(aiNewsService, "httpClient", mockHttp);
@@ -1523,7 +1523,7 @@ public class NewsServiceAndMigrationTest {
 
         NewsAiCache cached = new NewsAiCache();
         cached.setId(101L);
-        cached.setArticleUrl("https://example.com/old-pub-fresh-analysis");
+        cached.setArticleUrl("https://example.com/fresh-pub-fresh-analysis");
         cached.setTitle("Cổ Phiếu Công Nghệ Duy Trì Đà Tăng Trưởng Dài Hạn");
         cached.setOriginalTitle("Tech Stocks Hold Long Term Growth");
         cached.setDisplayTitleVi("Cổ Phiếu Công Nghệ Duy Trì Đà Tăng Trưởng Dài Hạn");
@@ -1535,8 +1535,8 @@ public class NewsServiceAndMigrationTest {
         cached.setReason("Tăng trưởng ổn định");
         cached.setSource("Bloomberg");
 
-        // Bài báo xuất bản từ 7 ngày trước (rất cũ), NHƯNG vừa được AI phân tích 15 phút trước
-        cached.setPublishedAt(LocalDateTime.now().minusDays(7));
+        // Bài báo xuất bản 2 giờ trước (mới <= 24h), VÀ vừa được AI phân tích 15 phút trước -> FRESH
+        cached.setPublishedAt(LocalDateTime.now().minusHours(2));
         cached.setAnalyzedAt(LocalDateTime.now().minusMinutes(15));
 
         when(newsAiCacheRepository.findBySymbolOrderByPublishedAtDesc(anyString())).thenReturn(List.of(cached));
@@ -1550,8 +1550,13 @@ public class NewsServiceAndMigrationTest {
         assertEquals("Cổ Phiếu Công Nghệ Duy Trì Đà Tăng Trưởng Dài Hạn", result.getItems().get(0).getTitle());
         assertTrue(result.getItems().get(0).isFromCache());
 
-        // Xác nhận HttpClient TUYỆT ĐỐI không được gọi đến Alpha Vantage vì cache analyzedAt còn mới
+        // Xác nhận HttpClient không được gọi vì cache vừa có publishedAt <= 24h vừa có analyzedAt mới
         verify(mockHttp, never()).send(any(), any());
+
+        // Nếu bài báo xuất bản từ 7 ngày trước (> 24h) -> isCacheFresh bắt buộc trả false (STALE)
+        cached.setPublishedAt(LocalDateTime.now().minusDays(7));
+        assertFalse(aiNewsService.isCacheFresh(List.of(aiNewsService.getValidLocalizedCacheItems("BTCUSDT", 5).get(0))),
+                "Bài báo xuất bản > 24h bắt buộc coi là STALE");
     }
 
     @Test

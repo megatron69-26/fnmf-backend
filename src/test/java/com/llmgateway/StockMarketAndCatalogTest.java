@@ -432,21 +432,28 @@ public class StockMarketAndCatalogTest {
         Watchlist w2 = new Watchlist();
         w2.setId(2L);
         w2.setUserId(10L);
-        w2.setSymbol("AAPL");
+        w2.setSymbol("SOLUSDT");
         w2.setDisplayOrder(2);
         w2.setCreatedAt(LocalDateTime.now());
 
-        when(mockWatchlistRepo.findByUserIdOrderByDisplayOrderAsc(10L)).thenReturn(List.of(w1, w2));
+        Watchlist w3 = new Watchlist();
+        w3.setId(3L);
+        w3.setUserId(10L);
+        w3.setSymbol("AAPL");
+        w3.setDisplayOrder(3);
+        w3.setCreatedAt(LocalDateTime.now());
+
+        when(mockWatchlistRepo.findByUserIdOrderByDisplayOrderAsc(10L)).thenReturn(List.of(w1, w2, w3));
 
         MarketPriceDto bnbPrice = new MarketPriceDto(
                 "BNBUSDT", "BNB", "CRYPTO", new BigDecimal("550.00"), new BigDecimal("1.50"),
                 new BigDecimal("550.00"), new BigDecimal("550.00"), "2026-09-14", false, "BINANCE", "2026-09-14"
         );
-        when(mockMarketData.getPriceBySymbol("BNBUSDT")).thenReturn(bnbPrice);
-        when(mockMarketData.getPriceBySymbol("AAPL")).thenThrow(new UnsupportedSymbolException("AAPL không hỗ trợ"));
+        when(mockMarketData.getCachedPrice("BNBUSDT")).thenReturn(bnbPrice);
+        when(mockMarketData.getCachedPrice("SOLUSDT")).thenReturn(null);
 
         List<WatchlistItemDto> items = watchlistService.getUserWatchlist(10L);
-        assertEquals(2, items.size());
+        assertEquals(2, items.size()); // BNBUSDT và SOLUSDT, AAPL bị ẩn khỏi active watchlist
 
         WatchlistItemDto bnbItem = items.get(0);
         assertEquals("BNBUSDT", bnbItem.getSymbol());
@@ -454,12 +461,11 @@ public class StockMarketAndCatalogTest {
         assertEquals("2026-09-14", bnbItem.getPriceAsOf());
         assertFalse(bnbItem.getStale());
 
-        WatchlistItemDto aaplItem = items.get(1);
-        assertEquals("AAPL", aaplItem.getSymbol());
-        assertEquals("Apple Inc.", aaplItem.getName());
-        assertNull(aaplItem.getCurrentPrice());
-        assertNull(aaplItem.getPriceAsOf());
-        assertFalse(aaplItem.getStale());
+        WatchlistItemDto solItem = items.get(1);
+        assertEquals("SOLUSDT", solItem.getSymbol());
+        assertNull(solItem.getCurrentPrice());
+        assertNull(solItem.getPriceAsOf());
+        assertFalse(solItem.getStale());
     }
 
     // =========================================================================
