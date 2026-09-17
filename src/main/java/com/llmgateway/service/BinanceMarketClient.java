@@ -131,13 +131,23 @@ public class BinanceMarketClient {
             throw new IllegalStateException("Invalid Binance response: missing lastPrice for " + binanceSymbol);
         }
 
-        BigDecimal rate = new BigDecimal(root.path("lastPrice").asText()).setScale(2, RoundingMode.HALF_UP);
-        BigDecimal bid = root.has("bidPrice")
-                ? new BigDecimal(root.path("bidPrice").asText()).setScale(2, RoundingMode.HALF_UP)
-                : rate;
-        BigDecimal ask = root.has("askPrice")
-                ? new BigDecimal(root.path("askPrice").asText()).setScale(2, RoundingMode.HALF_UP)
-                : rate;
+        BigDecimal rate = parsePriceScale(root.path("lastPrice").asText());
+        BigDecimal bid;
+        try {
+            bid = root.has("bidPrice") && !root.path("bidPrice").asText().isBlank()
+                    ? parsePriceScale(root.path("bidPrice").asText())
+                    : rate;
+        } catch (Exception e) {
+            bid = rate;
+        }
+        BigDecimal ask;
+        try {
+            ask = root.has("askPrice") && !root.path("askPrice").asText().isBlank()
+                    ? parsePriceScale(root.path("askPrice").asText())
+                    : rate;
+        } catch (Exception e) {
+            ask = rate;
+        }
         BigDecimal change24h = root.has("priceChangePercent")
                 ? new BigDecimal(root.path("priceChangePercent").asText()).setScale(2, RoundingMode.HALF_UP)
                 : BigDecimal.ZERO;
@@ -232,11 +242,14 @@ public class BinanceMarketClient {
 
     public static BigDecimal parsePriceScale(String rawText) {
         if (rawText == null || rawText.isBlank()) {
-            throw new IllegalArgumentException("Giá nến không được để trống (Zero-Fake cấm)");
+            throw new IllegalArgumentException("Giá không được để trống (Zero-Fake cấm)");
         }
         BigDecimal val = new BigDecimal(rawText.trim()).stripTrailingZeros();
         if (val.compareTo(BigDecimal.ZERO) <= 0) {
-            throw new IllegalArgumentException("Giá nến phải lớn hơn 0, cấm giá <= 0: " + rawText);
+            throw new IllegalArgumentException("Giá phải lớn hơn 0, cấm giá <= 0: " + rawText);
+        }
+        if (val.scale() < 2) {
+            val = val.setScale(2, RoundingMode.HALF_UP);
         }
         return val;
     }

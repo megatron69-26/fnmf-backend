@@ -392,6 +392,60 @@ public class WatchlistAndNewsBehavioralTest {
         assertThrows(IllegalStateException.class, () -> client.parseKlines("{\"error\":\"rate limit\"}", "1m"));
     }
 
+    @Test
+    @DisplayName("6d. fetch24hrTicker giữ nguyên độ chính xác giá (precision) cho DOGE, ADA, XRP, không làm tròn thô thành 2 chữ số")
+    public void test06d_fetch24hrTicker_preservesMicroPricePrecision_andPreventsTruncation() throws Exception {
+        java.net.http.HttpClient mockHttpClient = org.mockito.Mockito.mock(java.net.http.HttpClient.class);
+        java.net.http.HttpResponse<String> mockResponse = org.mockito.Mockito.mock(java.net.http.HttpResponse.class);
+
+        org.mockito.Mockito.when(mockResponse.statusCode()).thenReturn(200);
+        // DOGE ticker trả về 0.08125000, bid 0.08124000, ask 0.08125000
+        org.mockito.Mockito.when(mockResponse.body()).thenReturn(
+                "{\"symbol\":\"DOGEUSDT\",\"lastPrice\":\"0.08125000\",\"bidPrice\":\"0.08124000\",\"askPrice\":\"0.08125000\",\"priceChangePercent\":\"2.705\"}"
+        );
+        org.mockito.Mockito.doReturn(mockResponse)
+                .when(mockHttpClient)
+                .send(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+
+        BinanceMarketClient client = new BinanceMarketClient(
+                objectMapper,
+                mockHttpClient,
+                "https://data-api.binance.vision",
+                "https://api-gcp.binance.com"
+        );
+
+        BinanceMarketClient.BinanceTickerResult dogeResult = client.fetch24hrTicker("DOGEUSDT");
+        assertNotNull(dogeResult);
+        assertEquals(new BigDecimal("0.08125"), dogeResult.price(), "DOGE không được làm tròn thành 0.08!");
+        assertEquals(new BigDecimal("0.08124"), dogeResult.bidPrice(), "DOGE bid không được làm tròn thành 0.08!");
+        assertEquals(new BigDecimal("0.08125"), dogeResult.askPrice(), "DOGE ask không được làm tròn thành 0.08!");
+        assertEquals(5, dogeResult.price().scale());
+
+        // Kiểm tra ADA: 0.20060000
+        org.mockito.Mockito.when(mockResponse.body()).thenReturn(
+                "{\"symbol\":\"ADAUSDT\",\"lastPrice\":\"0.20060000\",\"bidPrice\":\"0.20050000\",\"askPrice\":\"0.20060000\",\"priceChangePercent\":\"5.12\"}"
+        );
+        BinanceMarketClient.BinanceTickerResult adaResult = client.fetch24hrTicker("ADAUSDT");
+        assertEquals(new BigDecimal("0.2006"), adaResult.price(), "ADA không được làm tròn thành 0.20!");
+        assertEquals(4, adaResult.price().scale());
+
+        // Kiểm tra XRP: 1.29880000
+        org.mockito.Mockito.when(mockResponse.body()).thenReturn(
+                "{\"symbol\":\"XRPUSDT\",\"lastPrice\":\"1.29880000\",\"bidPrice\":\"1.29870000\",\"askPrice\":\"1.29880000\",\"priceChangePercent\":\"2.43\"}"
+        );
+        BinanceMarketClient.BinanceTickerResult xrpResult = client.fetch24hrTicker("XRPUSDT");
+        assertEquals(new BigDecimal("1.2988"), xrpResult.price(), "XRP không được làm tròn thành 1.30!");
+        assertEquals(4, xrpResult.price().scale());
+
+        // Kiểm tra BTC: 76370.90000000 (tối thiểu 2 chữ số thập phân)
+        org.mockito.Mockito.when(mockResponse.body()).thenReturn(
+                "{\"symbol\":\"BTCUSDT\",\"lastPrice\":\"76370.90000000\",\"bidPrice\":\"76370.89000000\",\"askPrice\":\"76370.90000000\",\"priceChangePercent\":\"0.99\"}"
+        );
+        BinanceMarketClient.BinanceTickerResult btcResult = client.fetch24hrTicker("BTCUSDT");
+        assertEquals(new BigDecimal("76370.90"), btcResult.price(), "BTC phải có tối thiểu 2 chữ số thập phân");
+        assertEquals(2, btcResult.price().scale());
+    }
+
     // =========================================================================
     // 7. forceRefresh News không dùng CachedAlphaSnapshot
     // =========================================================================
