@@ -152,7 +152,9 @@ public class AiNewsService {
         if (!forceRefresh && isCacheFresh(cachedItems)) {
             log.info("Sử dụng cache tin tức tiếng Việt PostgreSQL còn mới (trong vòng {} phút), không cần gọi Alpha Vantage",
                     alphaNewsCoordinator.getRefreshIntervalMinutes());
-            return NewsSyncResult.ok(cachedItems);
+            String latestPublishedAt = (cachedItems != null && !cachedItems.isEmpty()) ? cachedItems.get(0).getTimePublished() : null;
+            String dataAsOf = (cachedItems != null && !cachedItems.isEmpty()) ? cachedItems.get(0).getAnalyzedAt() : null;
+            return NewsSyncResult.okFromCache(cachedItems, dataAsOf, latestPublishedAt);
         }
 
         // 3. Nếu đang trong thời gian Cooldown lỗi của Alpha Vantage
@@ -185,7 +187,9 @@ public class AiNewsService {
             // Re-check cache sau khi có lock (trong trường hợp luồng trước vừa hoàn tất ghi DB)
             cachedItems = getValidLocalizedCacheItems(symbol, limit);
             if (!forceRefresh && isCacheFresh(cachedItems)) {
-                return NewsSyncResult.ok(cachedItems);
+                String latestPublishedAt = (cachedItems != null && !cachedItems.isEmpty()) ? cachedItems.get(0).getTimePublished() : null;
+                String dataAsOf = (cachedItems != null && !cachedItems.isEmpty()) ? cachedItems.get(0).getAnalyzedAt() : null;
+                return NewsSyncResult.okFromCache(cachedItems, dataAsOf, latestPublishedAt);
             }
 
             // Kiểm tra snapshot Alpha trong RAM (bắt buộc bỏ qua khi forceRefresh = true)
@@ -444,7 +448,9 @@ public class AiNewsService {
                     return NewsSyncResult.emptyWithCache("Chưa có bản tin mới", enrichedList, dataAsOf, latestPublishedAt);
                 }
 
-                return NewsSyncResult.ok(enrichedList);
+                String latestPublishedAt = enrichedList.get(0).getTimePublished();
+                String dataAsOf = enrichedList.get(0).getAnalyzedAt();
+                return NewsSyncResult.okFresh(enrichedList, dataAsOf, latestPublishedAt);
             }
 
             // Nếu có raw items mà không có bài nào enriched (Gemini lỗi toàn bộ)

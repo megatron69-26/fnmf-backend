@@ -7,6 +7,9 @@ import com.llmgateway.dto.news.NewsSyncResult;
 import com.llmgateway.dto.quota.RefreshQuotaDto;
 import com.llmgateway.entity.NewsAiCache;
 import com.llmgateway.exception.UnauthorizedException;
+import com.llmgateway.entity.User;
+import com.llmgateway.entity.UserRole;
+import com.llmgateway.repository.UserRepository;
 import com.llmgateway.service.AiNewsService;
 import com.llmgateway.service.ContentRefreshQuotaService;
 import com.llmgateway.service.NewsPublisherResolver;
@@ -15,6 +18,7 @@ import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -39,18 +43,27 @@ public class NewsAiController {
     private final AiNewsService aiNewsService;
     private final ContentRefreshQuotaService quotaService;
     private final JwtUtil jwtUtil;
+    private final UserRepository userRepository;
 
     public NewsAiController(AiNewsService aiNewsService) {
-        this(aiNewsService, null, null);
+        this(aiNewsService, null, null, null);
+    }
+
+    public NewsAiController(AiNewsService aiNewsService,
+                            ContentRefreshQuotaService quotaService,
+                            JwtUtil jwtUtil) {
+        this(aiNewsService, quotaService, jwtUtil, null);
     }
 
     @Autowired
     public NewsAiController(AiNewsService aiNewsService,
                             ContentRefreshQuotaService quotaService,
-                            JwtUtil jwtUtil) {
+                            JwtUtil jwtUtil,
+                            UserRepository userRepository) {
         this.aiNewsService = aiNewsService;
         this.quotaService = quotaService;
         this.jwtUtil = jwtUtil;
+        this.userRepository = userRepository;
     }
 
     /**
@@ -272,10 +285,42 @@ public class NewsAiController {
 
     /**
      * GET /api/news/diagnostics
-     * Xác minh an toàn hệ thống tin tức & pipeline (Section E)
+     * Xác minh an toàn hệ thống tin tức & pipeline (Yêu cầu quyền ADMIN để bảo vệ thông tin hạ tầng)
      */
     @GetMapping("/diagnostics")
-    public ResponseEntity<Map<String, Object>> getDiagnostics() {
+    public ResponseEntity<?> getDiagnostics(
+            @RequestHeader(value = "Authorization", required = false) String authHeader) {
+        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(Map.of("status", "ERROR", "message", "Authorization token is missing or malformed"));
+        }
+        String token = authHeader.substring(7).trim();
+        if (token.startsWith("\"") && token.endsWith("\"") && token.length() > 1) {
+            token = token.substring(1, token.length() - 1).trim();
+        }
+        if (jwtUtil == null || !jwtUtil.validateToken(token)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(Map.of("status", "ERROR", "message", "Invalid or expired JWT token"));
+        }
+        String email = jwtUtil.getEmailFromToken(token);
+        if (email == null || email.isBlank()) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(Map.of("status", "ERROR", "message", "Invalid token claims"));
+        }
+        if (userRepository != null) {
+            User user = userRepository.findByEmail(email).orElse(null);
+            if (user == null) {
+                user = userRepository.findByEmailIgnoreCase(email).orElse(null);
+            }
+            if (user == null) {
+                return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                        .body(Map.of("status", "ERROR", "message", "User associated with token not found"));
+            }
+            if (user.getRole() != UserRole.ADMIN) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                        .body(Map.of("status", "ERROR", "message", "Access Denied: You do not have ADMIN privileges"));
+            }
+        }
         return ResponseEntity.ok(aiNewsService.getDiagnostics());
     }
 

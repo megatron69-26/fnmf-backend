@@ -343,4 +343,77 @@ public class NewsShardRoutingAndPipelineBehavioralTest {
         assertEquals("GEMINI_SHARD_2", shardRouter.resolveShardName("MARKET"));
         assertEquals("GEMINI_SHARD_3", shardRouter.resolveNewsShardName());
     }
+
+    @Test
+    @DisplayName("Test 13: NewsMetadataCacheContractTest - Nhánh cache trả fromCache=true, stale=false và đủ latestPublishedAt, dataAsOf")
+    public void test13_NewsMetadataCacheContractTest() {
+        NewsAiCache cached = new NewsAiCache();
+        cached.setId(100L);
+        cached.setArticleUrl("http://test.com/cache1");
+        cached.setSymbol("BTCUSDT");
+        cached.setTitle("Bitcoin Surges");
+        cached.setOriginalTitle("Bitcoin Surges");
+        cached.setDisplayTitleVi("Bitcoin bứt phá mạnh");
+        cached.setOriginalSummary("Market updates overview");
+        cached.setDisplaySummaryVi("Tóm tắt bản tin cập nhật thị trường");
+        cached.setSummaryPoints("[\"Điểm tin cập nhật số một\", \"Điểm tin cập nhật số hai\"]");
+        cached.setBulletPointsVi("[\"Điểm tin cập nhật số một\", \"Điểm tin cập nhật số hai\"]");
+        LocalDateTime pubTime = LocalDateTime.now().minusHours(2);
+        LocalDateTime analyzedTime = LocalDateTime.now().minusMinutes(5);
+        cached.setPublishedAt(pubTime);
+        cached.setAnalyzedAt(analyzedTime);
+        cached.setSentiment("BULLISH");
+
+        when(newsCacheService.findBySymbolOrderByPublishedAtDesc(anyString(), anyInt())).thenReturn(List.of(cached));
+        when(newsCacheService.findTopByOrderByPublishedAtDesc(anyInt())).thenReturn(List.of(cached));
+
+        NewsSyncResult result = aiNewsService.getLiveAiNewsSyncResult("BTCUSDT", 5, false);
+
+        assertEquals("ok", result.getStatus());
+        assertTrue(result.isFromCache(), "Đọc từ PostgreSQL cache thì fromCache phải là true");
+        assertFalse(result.isStale(), "Cache mới trong 90 phút và xuất bản < 24 giờ thì stale phải là false");
+        assertEquals(pubTime.toString(), result.getLatestPublishedAt(), "latestPublishedAt phải được gán chính xác");
+        assertEquals(analyzedTime.toString(), result.getDataAsOf(), "dataAsOf phải được gán chính xác");
+    }
+
+    @Test
+    @DisplayName("Test 14: NewsDiagnosticsAdminJwtProtectedTest - /api/news/diagnostics yêu cầu Admin JWT, chặn 401/403")
+    public void test14_NewsDiagnosticsAdminJwtProtectedTest() {
+        com.llmgateway.util.JwtUtil mockJwt = mock(com.llmgateway.util.JwtUtil.class);
+        com.llmgateway.repository.UserRepository mockUserRepo = mock(com.llmgateway.repository.UserRepository.class);
+
+        com.llmgateway.controller.NewsAiController controller =
+                new com.llmgateway.controller.NewsAiController(aiNewsService, null, mockJwt, mockUserRepo);
+
+        // 1. Không có header -> 401
+        org.springframework.http.ResponseEntity<?> resNoAuth = controller.getDiagnostics(null);
+        assertEquals(org.springframework.http.HttpStatus.UNAUTHORIZED, resNoAuth.getStatusCode());
+
+        // 2. Token không hợp lệ -> 401
+        when(mockJwt.validateToken("bad-token")).thenReturn(false);
+        org.springframework.http.ResponseEntity<?> resBadToken = controller.getDiagnostics("Bearer bad-token");
+        assertEquals(org.springframework.http.HttpStatus.UNAUTHORIZED, resBadToken.getStatusCode());
+
+        // 3. User có role USER -> 403 Forbidden
+        when(mockJwt.validateToken("user-token")).thenReturn(true);
+        when(mockJwt.getEmailFromToken("user-token")).thenReturn("user@fnmf.com");
+        com.llmgateway.entity.User normalUser = new com.llmgateway.entity.User();
+        normalUser.setEmail("user@fnmf.com");
+        normalUser.setRole(com.llmgateway.entity.UserRole.USER);
+        when(mockUserRepo.findByEmail("user@fnmf.com")).thenReturn(Optional.of(normalUser));
+
+        org.springframework.http.ResponseEntity<?> resForbidden = controller.getDiagnostics("Bearer user-token");
+        assertEquals(org.springframework.http.HttpStatus.FORBIDDEN, resForbidden.getStatusCode());
+
+        // 4. User có role ADMIN -> 200 OK
+        when(mockJwt.validateToken("admin-token")).thenReturn(true);
+        when(mockJwt.getEmailFromToken("admin-token")).thenReturn("admin@fnmf.com");
+        com.llmgateway.entity.User adminUser = new com.llmgateway.entity.User();
+        adminUser.setEmail("admin@fnmf.com");
+        adminUser.setRole(com.llmgateway.entity.UserRole.ADMIN);
+        when(mockUserRepo.findByEmail("admin@fnmf.com")).thenReturn(Optional.of(adminUser));
+
+        org.springframework.http.ResponseEntity<?> resAdminOk = controller.getDiagnostics("Bearer admin-token");
+        assertEquals(org.springframework.http.HttpStatus.OK, resAdminOk.getStatusCode());
+    }
 }

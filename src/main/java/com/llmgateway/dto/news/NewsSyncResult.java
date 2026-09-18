@@ -38,7 +38,24 @@ public class NewsSyncResult {
         if (items == null || items.isEmpty()) {
             throw new IllegalArgumentException("Không thể tạo NewsSyncResult với status 'ok' khi danh sách items rỗng. Yêu cầu ít nhất 1 bài viết.");
         }
-        return new NewsSyncResult("ok", null, items, false, false, null, null);
+        boolean fromCache = items.get(0).isFromCache();
+        String dataAsOf = items.get(0).getAnalyzedAt();
+        String latestPublishedAt = items.get(0).getTimePublished();
+        return new NewsSyncResult("ok", null, items, false, fromCache, dataAsOf, latestPublishedAt);
+    }
+
+    public static NewsSyncResult okFromCache(List<NewsFeedItemDto> items, String dataAsOf, String latestPublishedAt) {
+        if (items == null || items.isEmpty()) {
+            throw new IllegalArgumentException("Không thể tạo NewsSyncResult với status 'ok' khi danh sách items rỗng. Yêu cầu ít nhất 1 bài viết.");
+        }
+        return new NewsSyncResult("ok", null, items, false, true, dataAsOf, latestPublishedAt);
+    }
+
+    public static NewsSyncResult okFresh(List<NewsFeedItemDto> items, String dataAsOf, String latestPublishedAt) {
+        if (items == null || items.isEmpty()) {
+            throw new IllegalArgumentException("Không thể tạo NewsSyncResult với status 'ok' khi danh sách items rỗng. Yêu cầu ít nhất 1 bài viết.");
+        }
+        return new NewsSyncResult("ok", null, items, false, false, dataAsOf, latestPublishedAt);
     }
 
     public static NewsSyncResult stale(List<NewsFeedItemDto> items, String message, String dataAsOf, String latestPublishedAt) {
