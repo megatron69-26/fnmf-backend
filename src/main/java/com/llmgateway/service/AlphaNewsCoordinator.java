@@ -61,6 +61,7 @@ public class AlphaNewsCoordinator {
     private volatile long lastFailureTime = 0L;
     private volatile String lastFailureCode = null;
     private volatile long lastGeminiFailureTime = 0L;
+    private volatile long lastGeminiSuccessTime = 0L;
 
     // Lưu trữ immutable snapshot từ Alpha Vantage trong bộ nhớ
     private volatile CachedAlphaSnapshot cachedSnapshot = null;
@@ -201,6 +202,15 @@ public class AlphaNewsCoordinator {
 
     public void recordGeminiSuccess() {
         this.lastGeminiFailureTime = 0L;
+        this.lastGeminiSuccessTime = clock.millis();
+    }
+
+    public long getLastGeminiSuccessTime() {
+        return lastGeminiSuccessTime;
+    }
+
+    public void setLastGeminiSuccessTime(long lastGeminiSuccessTime) {
+        this.lastGeminiSuccessTime = lastGeminiSuccessTime;
     }
 
     public void recordSuccess() {
@@ -327,6 +337,7 @@ public class AlphaNewsCoordinator {
         this.lastFailureTime = 0L;
         this.lastFailureCode = null;
         this.lastGeminiFailureTime = 0L;
+        this.lastGeminiSuccessTime = 0L;
         this.cachedSnapshot = null;
         this.lastRawAlphaFeed = Collections.emptyList();
         this.lastRawAlphaSymbol = null;

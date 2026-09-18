@@ -46,7 +46,7 @@ public class AiNewsService {
     @Value("${alphavantage.api.url:https://www.alphavantage.co/query}")
     private String alphaVantageUrl = "https://www.alphavantage.co/query";
 
-    @Value("${openai.api.key:}")
+    // Backward-compatibility field for tests using ReflectionTestUtils.setField("geminiApiKey", ...)
     private String geminiApiKey;
 
     @Value("${openai.api.url:https://generativelanguage.googleapis.com/v1beta/openai/chat/completions}")
@@ -56,6 +56,8 @@ public class AiNewsService {
     private String geminiModel = "gemini-3.6-flash";
 
     private final AlphaNewsCoordinator alphaNewsCoordinator;
+    private final com.llmgateway.service.provider.GeminiShardRouter geminiShardRouter;
+    private volatile String selectedNewsShardName = null;
 
     public static class GeminiRateLimitException extends RuntimeException {
         public GeminiRateLimitException(String message) {
@@ -67,11 +69,13 @@ public class AiNewsService {
     public AiNewsService(NewsCacheService newsCacheService,
                          NewsAiCacheRepository newsAiCacheRepository,
                          ObjectMapper objectMapper,
-                         AlphaNewsCoordinator alphaNewsCoordinator) {
+                         AlphaNewsCoordinator alphaNewsCoordinator,
+                         com.llmgateway.service.provider.GeminiShardRouter geminiShardRouter) {
         this.newsCacheService = newsCacheService;
         this.newsAiCacheRepository = newsAiCacheRepository;
         this.objectMapper = objectMapper;
         this.alphaNewsCoordinator = alphaNewsCoordinator != null ? alphaNewsCoordinator : new AlphaNewsCoordinator();
+        this.geminiShardRouter = geminiShardRouter != null ? geminiShardRouter : new com.llmgateway.service.provider.GeminiShardRouter();
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
                 .build();
@@ -79,8 +83,22 @@ public class AiNewsService {
 
     public AiNewsService(NewsCacheService newsCacheService,
                          NewsAiCacheRepository newsAiCacheRepository,
+                         ObjectMapper objectMapper,
+                         AlphaNewsCoordinator alphaNewsCoordinator) {
+        this(newsCacheService, newsAiCacheRepository, objectMapper, alphaNewsCoordinator, new com.llmgateway.service.provider.GeminiShardRouter());
+    }
+
+    public AiNewsService(NewsCacheService newsCacheService,
+                         NewsAiCacheRepository newsAiCacheRepository,
+                         ObjectMapper objectMapper,
+                         com.llmgateway.service.provider.GeminiShardRouter geminiShardRouter) {
+        this(newsCacheService, newsAiCacheRepository, objectMapper, new AlphaNewsCoordinator(), geminiShardRouter);
+    }
+
+    public AiNewsService(NewsCacheService newsCacheService,
+                         NewsAiCacheRepository newsAiCacheRepository,
                          ObjectMapper objectMapper) {
-        this(newsCacheService, newsAiCacheRepository, objectMapper, new AlphaNewsCoordinator());
+        this(newsCacheService, newsAiCacheRepository, objectMapper, new AlphaNewsCoordinator(), new com.llmgateway.service.provider.GeminiShardRouter());
     }
 
     public AlphaNewsCoordinator getAlphaNewsCoordinator() {
@@ -781,10 +799,30 @@ public class AiNewsService {
      * ====================================================================================
      */
     public Optional<NewsAnalysisResponse> analyzeWithGemini(NewsAnalysisRequest request) {
-        if (geminiApiKey == null || geminiApiKey.isBlank() || geminiApiKey.startsWith("${")) {
-            log.warn("Gemini API Key chưa được cấu hình hoặc rỗng.");
+        String effectiveApiKey = null;
+        String shardName = "UNKNOWN";
+        if (geminiApiKey != null && !geminiApiKey.isBlank() && !geminiApiKey.startsWith("${")) {
+            effectiveApiKey = geminiApiKey.trim();
+            shardName = "OVERRIDE";
+        } else if (geminiShardRouter != null) {
+            try {
+                com.llmgateway.service.provider.GeminiShardRouter.GeminiShardInfo shardInfo = geminiShardRouter.resolveNewsShard();
+                if (shardInfo != null) {
+                    effectiveApiKey = shardInfo.apiKey();
+                    shardName = shardInfo.shardName();
+                }
+            } catch (Exception e) {
+                log.warn("Không thể xác định Gemini shard cho News: {}", e.getMessage());
+                return Optional.empty();
+            }
+        }
+
+        if (effectiveApiKey == null || effectiveApiKey.isBlank()) {
+            log.warn("Gemini API Key cho News chưa được cấu hình hoặc rỗng.");
             return Optional.empty();
         }
+
+        this.selectedNewsShardName = shardName;
 
         String targetSymbol = request.getSymbol() != null ? request.getSymbol() : "Thị trường tài chính";
         String systemPrompt = """
@@ -834,7 +872,7 @@ public class AiNewsService {
             HttpRequest httpRequest = HttpRequest.newBuilder()
                     .uri(URI.create(geminiApiUrl))
                     .header("Content-Type", "application/json; charset=utf-8")
-                    .header("Authorization", "Bearer " + geminiApiKey)
+                    .header("Authorization", "Bearer " + effectiveApiKey)
                     .timeout(Duration.ofSeconds(20))
                     .POST(HttpRequest.BodyPublishers.ofString(jsonPayload))
                     .build();
@@ -842,6 +880,7 @@ public class AiNewsService {
             HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString());
 
             if (response.statusCode() == 200) {
+                alphaNewsCoordinator.recordGeminiSuccess();
                 JsonNode root = objectMapper.readTree(response.body());
                 String rawText = root.path("choices").get(0).path("message").path("content").asText().trim();
 
@@ -878,16 +917,23 @@ public class AiNewsService {
                 resp.setDisplaySummaryVi(displaySummaryVi);
                 return Optional.of(resp);
             } else if (response.statusCode() == 429) {
-                log.warn("Gemini API trả về mã lỗi HTTP 429");
+                log.warn("Gemini API đạt giới hạn tần suất HTTP 429 cho shard {}", shardName);
+                alphaNewsCoordinator.recordGeminiFailure();
                 throw new GeminiRateLimitException("Gemini API rate limit exceeded (HTTP 429)");
+            } else if (response.statusCode() == 403) {
+                log.warn("Gemini API trả về mã lỗi HTTP 403 cho shard {}", shardName);
+                alphaNewsCoordinator.recordGeminiFailure();
+                return Optional.empty();
             } else {
-                log.warn("Gemini API trả về mã lỗi HTTP {}", response.statusCode());
+                log.warn("Gemini API trả về mã lỗi HTTP {} cho shard {}", response.statusCode(), shardName);
+                alphaNewsCoordinator.recordGeminiFailure();
                 return Optional.empty();
             }
         } catch (GeminiRateLimitException gre) {
             throw gre;
         } catch (Exception e) {
-            log.warn("Lỗi khi gọi Gemini API: class={}", e.getClass().getSimpleName());
+            log.warn("Lỗi khi gọi Gemini API cho shard {}: class={}", shardName, e.getClass().getSimpleName());
+            alphaNewsCoordinator.recordGeminiFailure();
             return Optional.empty();
         }
     }
@@ -924,6 +970,16 @@ public class AiNewsService {
         }
     }
 
+    public String getSelectedNewsShardName() {
+        return selectedNewsShardName != null
+                ? selectedNewsShardName
+                : (geminiShardRouter != null ? geminiShardRouter.resolveNewsShardName() : null);
+    }
+
+    public com.llmgateway.service.provider.GeminiShardRouter getGeminiShardRouter() {
+        return geminiShardRouter;
+    }
+
     /**
      * Chẩn đoán trạng thái hệ thống tin tức & kết nối an toàn (Section E).
      * Tuyệt đối không trả về API key, độ dài key, hay biến nội bộ nhạy cảm.
@@ -932,17 +988,66 @@ public class AiNewsService {
         Map<String, Object> diag = new java.util.LinkedHashMap<>();
 
         boolean alphaVantageConfigured = alphaVantageKey != null && !alphaVantageKey.isBlank() && !alphaVantageKey.startsWith("${");
-        boolean geminiConfigured = geminiApiKey != null && !geminiApiKey.isBlank() && !geminiApiKey.startsWith("${");
-        String effectiveModel = (geminiModel != null && !geminiModel.isBlank() && !geminiModel.startsWith("${")) ? geminiModel : "gemini-3.6-flash";
 
-        diag.put("status", (alphaVantageConfigured && geminiConfigured) ? "HEALTHY" : "DEGRADED");
+        String selectedShard = "UNKNOWN";
+        boolean geminiShardConfigured = false;
+        try {
+            if (geminiShardRouter != null) {
+                selectedShard = geminiShardRouter.resolveNewsShardName();
+                geminiShardConfigured = geminiShardRouter.isNewsShardConfigured();
+            }
+        } catch (Exception e) {
+            selectedShard = "INVALID_CONFIG";
+        }
+        if (geminiApiKey != null && !geminiApiKey.isBlank() && !geminiApiKey.startsWith("${")) {
+            geminiShardConfigured = true;
+        }
+
+        boolean alphaCooldown = alphaNewsCoordinator != null && alphaNewsCoordinator.isInCooldown();
+        boolean geminiCooldown = alphaNewsCoordinator != null && alphaNewsCoordinator.isGeminiInCooldown();
+        String alphaLastFailureCode = (alphaNewsCoordinator != null && alphaNewsCoordinator.getLastFailureCode() != null)
+                ? alphaNewsCoordinator.getLastFailureCode()
+                : "NONE";
+
+        long cacheCount = newsCacheService != null ? newsCacheService.count() : 0;
+        String latestPublishedAt = null;
+        if (newsCacheService != null) {
+            List<NewsAiCache> latestList = newsCacheService.findTopByOrderByPublishedAtDesc(1);
+            if (!latestList.isEmpty() && latestList.get(0).getPublishedAt() != null) {
+                latestPublishedAt = latestList.get(0).getPublishedAt().toString();
+            }
+        }
+
+        String lastAlphaFetch = null;
+        if (alphaNewsCoordinator != null && alphaNewsCoordinator.getLastAlphaSuccessTime() > 0) {
+            lastAlphaFetch = java.time.Instant.ofEpochMilli(alphaNewsCoordinator.getLastAlphaSuccessTime()).toString();
+        }
+
+        String lastGeminiAnalysis = null;
+        if (alphaNewsCoordinator != null && alphaNewsCoordinator.getLastGeminiSuccessTime() > 0) {
+            lastGeminiAnalysis = java.time.Instant.ofEpochMilli(alphaNewsCoordinator.getLastGeminiSuccessTime()).toString();
+        }
+
+        boolean healthy = alphaVantageConfigured && geminiShardConfigured && !alphaCooldown && !geminiCooldown;
+
+        diag.put("status", healthy ? "HEALTHY" : "DEGRADED");
+        diag.put("alphaConfigured", alphaVantageConfigured);
         diag.put("alphaVantageConfigured", alphaVantageConfigured);
-        diag.put("geminiConfigured", geminiConfigured);
-        diag.put("geminiModel", effectiveModel);
-        diag.put("databaseCacheCount", newsCacheService.count());
+        diag.put("selectedNewsShard", selectedShard);
+        diag.put("selectedNewsShardConfigured", geminiShardConfigured);
+        diag.put("geminiConfigured", geminiShardConfigured);
+        diag.put("geminiModel", (geminiModel != null && !geminiModel.isBlank() && !geminiModel.startsWith("${")) ? geminiModel : "gemini-3.6-flash");
+        diag.put("alphaCooldownActive", alphaCooldown);
+        diag.put("alphaLastFailureCode", alphaLastFailureCode);
+        diag.put("geminiCooldownActive", geminiCooldown);
+        diag.put("cachedArticleCount", cacheCount);
+        diag.put("databaseCacheCount", cacheCount);
+        diag.put("latestPublishedAt", latestPublishedAt);
+        diag.put("lastSuccessfulAlphaFetchAt", lastAlphaFetch);
+        diag.put("lastSuccessfulGeminiAnalysisAt", lastGeminiAnalysis);
 
-        log.info("NEWS PIPELINE DIAGNOSTICS | status={} | alphaConfigured={} | geminiConfigured={} | model='{}' | cacheCount={}",
-                diag.get("status"), alphaVantageConfigured, geminiConfigured, effectiveModel, diag.get("databaseCacheCount"));
+        log.info("NEWS PIPELINE DIAGNOSTICS | status={} | alphaConfigured={} | shard={} | shardConfigured={} | cacheCount={}",
+                diag.get("status"), alphaVantageConfigured, selectedShard, geminiShardConfigured, cacheCount);
 
         return diag;
     }

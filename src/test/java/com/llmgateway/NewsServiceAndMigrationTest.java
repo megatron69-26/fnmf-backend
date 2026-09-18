@@ -1379,14 +1379,16 @@ public class NewsServiceAndMigrationTest {
 
 
     @Test
-    @DisplayName("40. ProductionSecurityFilter chặn /api/news/diagnostics trả HTTP 404 trên profile prod")
+    @DisplayName("40. ProductionSecurityFilter cho phép /api/news/diagnostics an toàn và vẫn chặn h2/swagger/db-query")
     public void testProductionSecurityFilterBlocksDiagnostics() throws Exception {
         com.llmgateway.filter.ProductionSecurityFilter filter = new com.llmgateway.filter.ProductionSecurityFilter();
 
-        assertTrue(filter.isBlockedPath("/api/news/diagnostics"));
-        assertTrue(filter.isBlockedPath("/api/news/diagnostics/"));
-        assertTrue(filter.isBlockedPath("/api/news/diagnostics/details"));
-        assertTrue(filter.isBlockedPath("/API/NEWS/DIAGNOSTICS"));
+        assertFalse(filter.isBlockedPath("/api/news/diagnostics"), "Endpoint diagnostics an toàn không được bị chặn");
+        assertFalse(filter.isBlockedPath("/api/news/diagnostics/"), "Endpoint diagnostics an toàn không được bị chặn");
+
+        assertTrue(filter.isBlockedPath("/h2-console"));
+        assertTrue(filter.isBlockedPath("/swagger-ui"));
+        assertTrue(filter.isBlockedPath("/api/admin/db/query"));
 
         assertFalse(filter.isBlockedPath("/api/news/sync"));
         assertFalse(filter.isBlockedPath("/api/news/feed"));
@@ -1400,8 +1402,8 @@ public class NewsServiceAndMigrationTest {
 
         org.springframework.test.util.ReflectionTestUtils.invokeMethod(filter, "doFilterInternal", req, res, chain);
 
-        verify(res).sendError(jakarta.servlet.http.HttpServletResponse.SC_NOT_FOUND);
-        verify(chain, never()).doFilter(req, res);
+        verify(res, never()).sendError(anyInt());
+        verify(chain, times(1)).doFilter(req, res);
     }
 
     @Test

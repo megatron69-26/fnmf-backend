@@ -20,7 +20,7 @@ import java.io.IOException;
  * - /swagger-ui (và mọi path con, bao gồm /swagger-ui.html)
  * - /v3/api-docs (và mọi path con)
  * - /api/admin/db/query (và mọi path con)
- * Lưu ý: Cho phép /admin.html, /admin.css, /admin.js phục vụ Cloud Admin.
+ * Lưu ý: Cho phép /admin.html, /admin.css, /admin.js phục vụ Cloud Admin và /api/news/diagnostics an toàn.
  */
 @Component
 @Profile("prod")
@@ -71,11 +71,6 @@ public class ProductionSecurityFilter extends OncePerRequestFilter {
 
         // 4. /api/admin/db/query và mọi path con (chỉ cho phép dev/local)
         if (normalized.equals("/api/admin/db/query") || normalized.startsWith("/api/admin/db/query/")) {
-            return true;
-        }
-
-        // 5. /api/news/diagnostics và mọi path con (chỉ cho phép dev/local, chặn trên prod)
-        if (normalized.equals("/api/news/diagnostics") || normalized.startsWith("/api/news/diagnostics/")) {
             return true;
         }
 

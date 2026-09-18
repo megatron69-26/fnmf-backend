@@ -53,6 +53,9 @@ public class GeminiShardRouter {
     @Value("${gemini.market.shard:${GEMINI_MARKET_SHARD:GEMINI_SHARD_1}}")
     private String marketShard = SHARD_1;
 
+    @Value("${gemini.news.shard:${GEMINI_NEWS_SHARD:GEMINI_SHARD_3}}")
+    private String newsShard = SHARD_3;
+
     public void setShardKeys(String k1, String k2, String k3) {
         this.shard1Key = k1;
         this.shard2Key = k2;
@@ -63,10 +66,61 @@ public class GeminiShardRouter {
         this.marketShard = marketShard;
     }
 
+    public void setNewsShard(String newsShard) {
+        this.newsShard = newsShard;
+    }
+
     public record GeminiShardInfo(
             String shardName,
             String apiKey
     ) {}
+
+    public String resolveNewsShardName() {
+        if (newsShard == null || newsShard.isBlank()) {
+            return SHARD_3;
+        }
+        String clean = newsShard.trim().toUpperCase();
+        if (SHARD_1.equals(clean)) {
+            return SHARD_1;
+        }
+        if (SHARD_2.equals(clean)) {
+            return SHARD_2;
+        }
+        if (SHARD_3.equals(clean)) {
+            return SHARD_3;
+        }
+        throw new ForecastUnavailableException("Cấu hình GEMINI_NEWS_SHARD không hợp lệ: '" + newsShard
+                + "'. Chỉ chấp nhận GEMINI_SHARD_1, GEMINI_SHARD_2 hoặc GEMINI_SHARD_3.");
+    }
+
+    public GeminiShardInfo resolveNewsShard() {
+        String targetShard = resolveNewsShardName();
+        if (SHARD_1.equals(targetShard)) {
+            validateKey(shard1Key, SHARD_1, "NEWS");
+            return new GeminiShardInfo(SHARD_1, shard1Key.trim());
+        } else if (SHARD_2.equals(targetShard)) {
+            validateKey(shard2Key, SHARD_2, "NEWS");
+            return new GeminiShardInfo(SHARD_2, shard2Key.trim());
+        } else {
+            validateKey(shard3Key, SHARD_3, "NEWS");
+            return new GeminiShardInfo(SHARD_3, shard3Key.trim());
+        }
+    }
+
+    public boolean isNewsShardConfigured() {
+        try {
+            String targetShard = resolveNewsShardName();
+            String key = switch (targetShard) {
+                case SHARD_1 -> shard1Key;
+                case SHARD_2 -> shard2Key;
+                case SHARD_3 -> shard3Key;
+                default -> null;
+            };
+            return key != null && !key.isBlank() && !key.startsWith("${");
+        } catch (Exception e) {
+            return false;
+        }
+    }
 
     private String resolveMarketShard() {
         if (marketShard == null || marketShard.isBlank()) {
@@ -92,6 +146,9 @@ public class GeminiShardRouter {
         }
 
         String clean = symbol.trim().toUpperCase();
+        if ("NEWS".equals(clean)) {
+            return resolveNewsShard();
+        }
         if ("MARKET".equals(clean)) {
             String targetShard = resolveMarketShard();
             if (SHARD_2.equals(targetShard)) {
@@ -134,6 +191,9 @@ public class GeminiShardRouter {
         }
 
         String clean = symbol.trim().toUpperCase();
+        if ("NEWS".equals(clean)) {
+            return resolveNewsShardName();
+        }
         if ("MARKET".equals(clean)) {
             return resolveMarketShard();
         }
