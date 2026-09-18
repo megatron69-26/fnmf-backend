@@ -424,7 +424,7 @@ public class MarketForecastBehavioralTest {
                 "Nhận định kỹ thuật chi tiết", "Nhận định vĩ mô khả quan",
                 "GEMINI", 30
         );
-        validOldGemini.setCreatedAt(LocalDateTime.now().minusMinutes(10));
+        validOldGemini.setCreatedAt(LocalDateTime.now().minusHours(25));
 
         when(forecastRepository.findBySymbolOrderByCreatedAtDesc("MARKET"))
                 .thenReturn(List.of(newestHeuristic, badGemini, validOldGemini));
@@ -508,6 +508,90 @@ public class MarketForecastBehavioralTest {
         router.setMarketShard("RANDOM_TEXT_123");
         assertThrows(ForecastUnavailableException.class, () -> router.resolveShard("MARKET"));
         assertThrows(ForecastUnavailableException.class, () -> router.resolveShardName("MARKET"));
+    }
+
+    @Test
+    @DisplayName("11. Cache hit < 24h trả về ngay lập tức, Zero external calls (Binance, Gemini, News), stale=false")
+    void testCacheHit_within24h_zeroExternalCalls_fresh() {
+        MarketForecast freshGemini = new MarketForecast(
+                "MARKET", new BigDecimal("65000.00"), "BULLISH_UPTREND", "24H_7D",
+                new BigDecimal("63000"), new BigDecimal("68000"), "BUY",
+                new BigDecimal("85"), "[\"Dòng tiền tổ chức tiếp tục gia tăng mạnh\", \"Khối lượng giao dịch mở rộng bền vững\"]",
+                "Nhận định kỹ thuật xu hướng tích cực", "Nhận định vĩ mô ủng hộ xu hướng tăng",
+                "GEMINI", 30
+        );
+        freshGemini.setCreatedAt(LocalDateTime.now().minusHours(2));
+        when(forecastRepository.findBySymbolOrderByCreatedAtDesc("MARKET")).thenReturn(List.of(freshGemini));
+
+        ForecastResponse result = forecastService.generateMarketForecast("24H_7D", false);
+
+        assertNotNull(result);
+        assertEquals("MARKET", result.getSymbol());
+        assertTrue(result.isFromCache());
+        assertFalse(result.isStale());
+        assertEquals("GEMINI", result.getAnalysisSource());
+
+        verifyNoInteractions(marketDataService);
+        verifyNoInteractions(geminiForecastClient);
+        verifyNoInteractions(newsAiCacheRepository);
+    }
+
+    @Test
+    @DisplayName("12. Cache >= 24h trả về từ DB không chặn người dùng, Zero external calls, stale=true")
+    void testCacheHit_olderThan24h_returnsStaleTrue() {
+        MarketForecast staleGemini = new MarketForecast(
+                "MARKET", new BigDecimal("65000.00"), "BULLISH_UPTREND", "24H_7D",
+                new BigDecimal("63000"), new BigDecimal("68000"), "BUY",
+                new BigDecimal("85"), "[\"Dòng tiền tổ chức tiếp tục gia tăng mạnh\", \"Khối lượng giao dịch mở rộng bền vững\"]",
+                "Nhận định kỹ thuật xu hướng tích cực", "Nhận định vĩ mô ủng hộ xu hướng tăng",
+                "GEMINI", 30
+        );
+        staleGemini.setCreatedAt(LocalDateTime.now().minusHours(25));
+        when(forecastRepository.findBySymbolOrderByCreatedAtDesc("MARKET")).thenReturn(List.of(staleGemini));
+
+        ForecastResponse result = forecastService.generateMarketForecast("24H_7D", false);
+
+        assertNotNull(result);
+        assertEquals("MARKET", result.getSymbol());
+        assertTrue(result.isFromCache());
+        assertTrue(result.isStale());
+        assertEquals("GEMINI", result.getAnalysisSource());
+
+        verifyNoInteractions(marketDataService);
+        verifyNoInteractions(geminiForecastClient);
+        verifyNoInteractions(newsAiCacheRepository);
+    }
+
+    @Test
+    @DisplayName("13. POST refresh bypasses cache và gọi Gemini tạo dự báo mới")
+    void testPostRefreshBypassesCache_callsGeminiAndGenerates() throws Exception {
+        when(jwtUtil.getUserIdFromToken(anyString())).thenReturn(100L);
+        when(jwtUtil.validateToken(anyString())).thenReturn(true);
+        when(quotaService.acquireRefreshQuota(eq(100L), anyString(), eq("FORECAST")))
+                .thenReturn(new RefreshQuotaDto(10, 1, 9, LocalDate.now().toString(), false));
+
+        MarketPriceDto btcPrice = new MarketPriceDto("BTCUSDT", "Bitcoin", new BigDecimal("65000.00"), new BigDecimal("2.5"), false, "BINANCE_REALTIME");
+        when(marketDataService.getPriceBySymbol("BTCUSDT")).thenReturn(btcPrice);
+        when(marketDataService.getAllPrices()).thenReturn(List.of(btcPrice));
+        when(marketDataService.getCandles(eq("BTCUSDT"), anyString())).thenReturn(List.of(
+                new CandleDto("2026-09-16", new BigDecimal("64000"), new BigDecimal("66000"), new BigDecimal("63500"), new BigDecimal("65000"), new BigDecimal("1000"))
+        ));
+
+        ForecastResponse newGeminiResp = createMarketGeminiResponse();
+        when(geminiForecastClient.requestMarketForecast(anyList(), anyList(), anyList(), anyString()))
+                .thenReturn(newGeminiResp);
+
+        ForecastRequest refreshReq = new ForecastRequest("MARKET", "24H_7D", "client-bypass-req");
+        mockMvc.perform(post("/api/forecast/market/refresh")
+                        .header("Authorization", "Bearer valid-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(refreshReq)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.symbol").value("MARKET"))
+                .andExpect(jsonPath("$.fromCache").value(false))
+                .andExpect(jsonPath("$.stale").value(false));
+
+        verify(geminiForecastClient, times(1)).requestMarketForecast(anyList(), anyList(), anyList(), anyString());
     }
 }
 

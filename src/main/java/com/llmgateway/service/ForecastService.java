@@ -20,6 +20,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -95,18 +96,11 @@ public class ForecastService {
         String tf = (timeframe != null && !timeframe.isBlank()) ? timeframe : "24H_7D";
 
         // 1. Kiểm tra CSDL cache (chỉ chấp nhận nguồn GEMINI)
+        // Zero external calls: Không gọi resolveMarketBenchmarkPrice(), không gọi Binance, không gọi Gemini khi có cache
         if (!bypassCache) {
-            try {
-                MarketPriceDto benchmarkPriceDto = resolveMarketBenchmarkPrice();
-                Optional<ForecastResponse> cached = forecastCacheService.getFreshForecast("MARKET", benchmarkPriceDto);
-                if (cached.isPresent()) {
-                    ForecastResponse resp = cached.get();
-                    resp.setFromCache(true);
-                    resp.setStale(false);
-                    return resp;
-                }
-            } catch (Exception e) {
-                log.warn("Không thể kiểm tra cache với giá benchmark: {}", e.getClass().getSimpleName());
+            Optional<ForecastResponse> cached = getMarketForecastFromDb(tf);
+            if (cached.isPresent()) {
+                return cached.get();
             }
         }
 
@@ -140,40 +134,11 @@ public class ForecastService {
 
         // 5. Fallback khi Gemini lỗi hoặc không có giá BTC thật:
         // Tìm bản ghi MARKET nguồn GEMINI hợp lệ gần nhất trong CSDL (không bỏ cuộc nếu bản mới nhất sai nguồn)
-        List<MarketForecast> records = forecastRepository.findBySymbolOrderByCreatedAtDesc("MARKET");
-        if (records != null) {
-            for (MarketForecast record : records) {
-                if ("GEMINI".equalsIgnoreCase(record.getAnalysisSource())) {
-                    List<String> keyDrivers = forecastCacheService.parseKeyDrivers(record.getAnalysisSummary());
-                    ForecastResponse fallback = new ForecastResponse(
-                            "MARKET",
-                            "Nhận định toàn thị trường",
-                            record.getCurrentPrice(),
-                            record.getTrendPrediction(),
-                            record.getTimeframe(),
-                            record.getSupportLevel(),
-                            record.getResistanceLevel(),
-                            record.getRecommendation(),
-                            record.getConfidenceScore() != null ? record.getConfidenceScore().intValue() : 50,
-                            keyDrivers,
-                            record.getTechnicalOutlook(),
-                            record.getFundamentalOutlook(),
-                            "GEMINI",
-                            record.getCandleCount() != null ? record.getCandleCount() : 30,
-                            true,
-                            record.getCreatedAt()
-                    );
-                    fallback.setAiShard(record.getAiShard());
-                    fallback.setStale(true);
-                    if (ForecastQualityPolicy.isValid(fallback)) {
-                        return fallback;
-                    } else {
-                        log.warn("Bản ghi stale MARKET nguồn GEMINI không thỏa mãn chính sách chất lượng");
-                    }
-                } else {
-                    log.warn("Bỏ qua bản ghi stale MARKET không phải nguồn GEMINI: {}", record.getAnalysisSource());
-                }
-            }
+        Optional<ForecastResponse> fallbackOpt = getMarketForecastFromDb(tf);
+        if (fallbackOpt.isPresent()) {
+            ForecastResponse fallback = fallbackOpt.get();
+            fallback.setStale(true); // Cưỡng bức stale khi rơi vào fallback sau khi Gemini gặp sự cố
+            return fallback;
         }
 
         // 6. Nếu không có giá thật và không có cache GEMINI hợp lệ: trả lỗi 503 an toàn cố định
@@ -346,46 +311,75 @@ public class ForecastService {
     }
 
     /**
-     * Lấy bản dự báo từ cache CSDL mà không gọi Gemini Provider hay Market Data Provider (dùng cho Replay).
-     * Tuyệt đối không gọi resolveMarketBenchmarkPrice() hoặc bất kỳ provider nào.
-     * Đọc trực tiếp bản MARKET mới nhất trong CSDL, chỉ chấp nhận analysisSource=GEMINI và ForecastQualityPolicy hợp lệ.
+     * Truy vấn CSDL PostgreSQL trước:
+     * - Nếu có bản MARKET nguồn GEMINI hợp lệ, trả ngay với fromCache=true.
+     * - Zero external calls: không gọi Binance, Gemini hay News.
+     * - TTL 24h: bản trong 24 giờ là stale=false; bản quá 24 giờ là stale=true.
      */
-    public Optional<ForecastResponse> getFreshForecastFromCacheOnly(String symbol) {
+    public Optional<ForecastResponse> getMarketForecastFromDb(String timeframe) {
         List<MarketForecast> records = forecastRepository.findBySymbolOrderByCreatedAtDesc("MARKET");
         if (records == null || records.isEmpty()) {
-            return Optional.empty();
+            Optional<MarketForecast> topRecord = forecastRepository.findTopBySymbolOrderByCreatedAtDesc("MARKET");
+            if (topRecord.isPresent()) {
+                records = List.of(topRecord.get());
+            } else {
+                return Optional.empty();
+            }
         }
 
         for (MarketForecast record : records) {
             if ("GEMINI".equalsIgnoreCase(record.getAnalysisSource())) {
                 List<String> keyDrivers = forecastCacheService.parseKeyDrivers(record.getAnalysisSummary());
+                if (keyDrivers == null || keyDrivers.isEmpty()) {
+                    log.warn("Bỏ qua bản ghi MARKET nguồn GEMINI thiếu key drivers");
+                    continue;
+                }
                 ForecastResponse resp = new ForecastResponse(
                         "MARKET",
                         "Nhận định toàn thị trường",
                         record.getCurrentPrice(),
                         record.getTrendPrediction(),
-                        record.getTimeframe(),
+                        record.getTimeframe() != null ? record.getTimeframe() : timeframe,
                         record.getSupportLevel(),
                         record.getResistanceLevel(),
                         record.getRecommendation(),
-                        record.getConfidenceScore() != null ? record.getConfidenceScore().intValue() : null,
+                        record.getConfidenceScore() != null ? record.getConfidenceScore().intValue() : 50,
                         keyDrivers,
                         record.getTechnicalOutlook(),
                         record.getFundamentalOutlook(),
                         "GEMINI",
-                        record.getCandleCount(),
+                        record.getCandleCount() != null ? record.getCandleCount() : 30,
                         true,
                         record.getCreatedAt()
                 );
                 resp.setAiShard(record.getAiShard());
                 resp.setFromCache(true);
-                resp.setStale(false);
+
+                // TTL 24h: Bản trong 24 giờ là stale=false; bản quá 24 giờ là stale=true
+                boolean isFresh = record.getCreatedAt() != null &&
+                        record.getCreatedAt().isAfter(LocalDateTime.now().minusHours(24));
+                resp.setStale(!isFresh);
+
                 if (ForecastQualityPolicy.isValid(resp)) {
+                    log.info("LẤY DỰ BÁO MARKET TỪ DATABASE CACHE | id={} | stale={} | createdAt={}",
+                            record.getId(), resp.isStale(), record.getCreatedAt());
                     return Optional.of(resp);
+                } else {
+                    log.warn("Bản ghi MARKET nguồn GEMINI không thỏa mãn chính sách chất lượng");
                 }
+            } else {
+                log.warn("Bỏ qua bản ghi MARKET không phải nguồn GEMINI: {}", record.getAnalysisSource());
             }
         }
 
         return Optional.empty();
+    }
+
+    /**
+     * Lấy bản dự báo từ cache CSDL mà không gọi Gemini Provider hay Market Data Provider (dùng cho Replay).
+     * Tuyệt đối không gọi resolveMarketBenchmarkPrice() hoặc bất kỳ provider nào.
+     */
+    public Optional<ForecastResponse> getFreshForecastFromCacheOnly(String symbol) {
+        return getMarketForecastFromDb("24H_7D");
     }
 }

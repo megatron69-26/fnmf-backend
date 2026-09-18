@@ -25,7 +25,8 @@ import java.util.Optional;
 public class ForecastCacheService {
 
     private static final Logger log = LoggerFactory.getLogger(ForecastCacheService.class);
-    public static final int FORECAST_CACHE_MINUTES = 15;
+    public static final int FORECAST_CACHE_HOURS = 24;
+    public static final int FORECAST_CACHE_MINUTES = FORECAST_CACHE_HOURS * 60;
     public static final String REQUIRED_SOURCE = "GEMINI";
 
     private final MarketForecastRepository forecastRepository;
@@ -47,7 +48,7 @@ public class ForecastCacheService {
 
     /**
      * Lấy bản dự báo còn hạn từ CSDL nếu thoả mãn:
-     * 1. Tạo trong vòng 15 phút.
+     * 1. Tạo trong vòng 24 giờ.
      * 2. Nguồn phân tích là GEMINI (Zero Heuristic).
      */
     public Optional<ForecastResponse> getFreshForecast(String symbol, MarketPriceDto priceDto) {
@@ -66,8 +67,8 @@ public class ForecastCacheService {
             return Optional.empty();
         }
 
-        // 2. Kiểm tra thời hạn cache (15 phút)
-        if (cached.getCreatedAt() == null || cached.getCreatedAt().isBefore(LocalDateTime.now().minusMinutes(FORECAST_CACHE_MINUTES))) {
+        // 2. Kiểm tra thời hạn cache (24 giờ)
+        if (cached.getCreatedAt() == null || cached.getCreatedAt().isBefore(LocalDateTime.now().minusHours(FORECAST_CACHE_HOURS))) {
             return Optional.empty();
         }
 
