@@ -55,11 +55,15 @@ public class MarketDataService {
     // ====================================================================================
     private final Map<String, MarketPriceDto> priceCache = new ConcurrentHashMap<>();
     private final Map<String, List<CandleDto>> candleCache = new ConcurrentHashMap<>();
+    private final Map<String, Long> candleCacheTime = new ConcurrentHashMap<>();
+    private final Map<String, Long> candleFailureTime = new ConcurrentHashMap<>();
+    private final Map<String, Object> candleKeyLocks = new ConcurrentHashMap<>();
     private final List<NewsFeedItemDto> newsFeedCache = new ArrayList<>();
     private long lastPriceFetchTime = 0;
     private long lastNewsFetchTime = 0;
     private static final long PRICE_CACHE_TTL_MS = 15_000; // 15 giây
     private static final long NEWS_CACHE_TTL_MS = 120_000; // 2 phút
+    private static final long CANDLE_1S_CACHE_TTL_MS = 1_000; // 1 giây chống thundering herd / request đồng thời
 
     public MarketDataService(ObjectMapper objectMapper, BinanceMarketClient binanceMarketClient) {
         this(objectMapper, binanceMarketClient, null);
@@ -159,12 +163,15 @@ public class MarketDataService {
         if ("1m".equals(lower)) {
             return "1m";
         }
-        throw new IllegalArgumentException("Khoảng thời gian không hợp lệ: " + interval + ". Chỉ hỗ trợ: 1m, daily");
+        if ("1s".equals(lower)) {
+            return "1s";
+        }
+        throw new IllegalArgumentException("Khoảng thời gian không hợp lệ: " + interval + ". Chỉ hỗ trợ: 1s, 1m, daily");
     }
 
     /**
      * Lấy chuỗi nến OHLC thật cho biểu đồ.
-     * Đối với Crypto & Commodity: dùng Binance (hỗ trợ interval whitelist 1m, daily).
+     * Đối với Crypto & Commodity: dùng Binance (hỗ trợ interval whitelist 1s, 1m, daily).
      * Đối với 8 mã cổ phiếu: dùng Alpha Vantage / Cache 24h qua StockMarketService.
      * Ném UnsupportedSymbolException (HTTP 422) nếu mã không hỗ trợ.
      * Ném IllegalArgumentException (HTTP 400) nếu interval không nằm trong whitelist.
@@ -183,27 +190,77 @@ public class MarketDataService {
             throw new MarketDataUnavailableException("Dịch vụ nến cổ phiếu chưa sẵn sàng cho mã: " + canonicalSymbol);
         }
 
-        String binanceInterval = "1m".equals(normalizedInterval) ? "1m" : "1d";
+        String binanceInterval;
+        if ("1s".equals(normalizedInterval)) {
+            binanceInterval = "1s";
+        } else if ("1m".equals(normalizedInterval)) {
+            binanceInterval = "1m";
+        } else {
+            binanceInterval = "1d";
+        }
         MarketSymbolConfig.SymbolMeta meta = MarketSymbolConfig.getMeta(canonicalSymbol);
 
-        String cacheKey = canonicalSymbol + "_" + normalizedInterval;
+        String cacheKey = canonicalSymbol + "#" + normalizedInterval;
 
-        try {
-            List<CandleDto> candles = binanceMarketClient.fetchKlines(meta.binanceSymbol(), binanceInterval, 30);
-            if (!candles.isEmpty()) {
-                candleCache.put(cacheKey, candles);
-                return candles;
+        // 1. Fast-path: nếu là 1s và cache còn trong TTL 1 giây thì trả về ngay
+        long now = System.currentTimeMillis();
+        if ("1s".equals(normalizedInterval)) {
+            Long lastFetch = candleCacheTime.get(cacheKey);
+            if (lastFetch != null && (now - lastFetch < CANDLE_1S_CACHE_TTL_MS) && candleCache.containsKey(cacheKey)) {
+                return candleCache.get(cacheKey);
             }
-        } catch (Exception e) {
-            log.warn("Lỗi khi tải nến từ Binance cho mã {}: {}", canonicalSymbol, e.getMessage());
+        }
+        Long lastFailure = candleFailureTime.get(cacheKey);
+        if (lastFailure != null && (now - lastFailure < CANDLE_1S_CACHE_TTL_MS)) {
+            if (candleCache.containsKey(cacheKey) && !candleCache.get(cacheKey).isEmpty()) {
+                return candleCache.get(cacheKey);
+            }
+            throw new MarketDataUnavailableException("Dữ liệu nến tạm thời không khả dụng cho mã: " + canonicalSymbol);
         }
 
-        if (candleCache.containsKey(cacheKey) && !candleCache.get(cacheKey).isEmpty()) {
-            log.info("SỬ DỤNG CACHE NẾN THẬT CHO MÃ {}", canonicalSymbol);
-            return candleCache.get(cacheKey);
-        }
+        // 2. Single-flight per-key lock: Chống thundering herd khi cache lạnh hoặc vừa hết hạn
+        Object lock = candleKeyLocks.computeIfAbsent(cacheKey, k -> new Object());
+        synchronized (lock) {
+            now = System.currentTimeMillis();
+            // Double-checked locking sau khi đã giữ lock
+            if ("1s".equals(normalizedInterval)) {
+                Long lastFetch = candleCacheTime.get(cacheKey);
+                if (lastFetch != null && (now - lastFetch < CANDLE_1S_CACHE_TTL_MS) && candleCache.containsKey(cacheKey)) {
+                    return candleCache.get(cacheKey);
+                }
+            }
+            lastFailure = candleFailureTime.get(cacheKey);
+            if (lastFailure != null && (now - lastFailure < CANDLE_1S_CACHE_TTL_MS)) {
+                if (candleCache.containsKey(cacheKey) && !candleCache.get(cacheKey).isEmpty()) {
+                    return candleCache.get(cacheKey);
+                }
+                throw new MarketDataUnavailableException("Dữ liệu nến tạm thời không khả dụng cho mã: " + canonicalSymbol);
+            }
 
-        throw new MarketDataUnavailableException("Dữ liệu nến tạm thời không khả dụng cho mã: " + canonicalSymbol);
+            try {
+                List<CandleDto> candles = binanceMarketClient.fetchKlines(meta.binanceSymbol(), binanceInterval, 30);
+                if (!candles.isEmpty()) {
+                    candleCache.put(cacheKey, candles);
+                    candleCacheTime.put(cacheKey, System.currentTimeMillis()); // Ghi timestamp SAU KHI fetch thành công
+                    candleFailureTime.remove(cacheKey);
+                    return candles;
+                }
+            } catch (Exception e) {
+                log.warn("Lỗi khi tải nến từ Binance cho mã {}: {}", canonicalSymbol, e.getMessage());
+            }
+
+            // Ghi nhận timestamp thất bại để bảo vệ chống thundering herd khi provider lỗi/trả rỗng
+            long failureNow = System.currentTimeMillis();
+            candleFailureTime.put(cacheKey, failureNow);
+
+            if (candleCache.containsKey(cacheKey) && !candleCache.get(cacheKey).isEmpty()) {
+                log.info("SỬ DỤNG CACHE NẾN THẬT CHO MÃ {}", canonicalSymbol);
+                candleCacheTime.put(cacheKey, failureNow); // Gia hạn stale cache thêm 1 TTL để các thread khác dùng ngay
+                return candleCache.get(cacheKey);
+            }
+
+            throw new MarketDataUnavailableException("Dữ liệu nến tạm thời không khả dụng cho mã: " + canonicalSymbol);
+        }
     }
 
     /**
@@ -238,6 +295,9 @@ public class MarketDataService {
     public void clearCache() {
         priceCache.clear();
         candleCache.clear();
+        candleCacheTime.clear();
+        candleFailureTime.clear();
+        candleKeyLocks.clear();
         newsFeedCache.clear();
         lastPriceFetchTime = 0;
         lastNewsFetchTime = 0;

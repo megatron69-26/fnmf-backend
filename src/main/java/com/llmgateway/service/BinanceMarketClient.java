@@ -19,6 +19,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
@@ -110,7 +111,14 @@ public class BinanceMarketClient {
     }
 
     public String buildKlinesUrl(String baseUrl, String binanceSymbol, String interval, int limit) {
-        String binanceInterval = (interval != null && !interval.equalsIgnoreCase("daily")) ? interval : "1d";
+        String binanceInterval;
+        if ("1s".equalsIgnoreCase(interval)) {
+            binanceInterval = "1s";
+        } else if ("1m".equalsIgnoreCase(interval)) {
+            binanceInterval = "1m";
+        } else {
+            binanceInterval = "1d";
+        }
         int candleLimit = limit > 0 ? limit : 30;
         return String.format("%s/api/v3/klines?symbol=%s&interval=%s&limit=%d",
                 normalizeBaseUrl(baseUrl), binanceSymbol, binanceInterval, candleLimit);
@@ -179,8 +187,8 @@ public class BinanceMarketClient {
         }
 
         List<CandleDto> list = new ArrayList<>();
-        boolean is1m = "1m".equalsIgnoreCase(interval);
-        DateTimeFormatter formatter = is1m
+        boolean isSubDaily = "1m".equalsIgnoreCase(interval) || "1s".equalsIgnoreCase(interval);
+        DateTimeFormatter formatter = isSubDaily
                 ? DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
                 : DateTimeFormatter.ofPattern("yyyy-MM-dd");
 
@@ -203,7 +211,7 @@ public class BinanceMarketClient {
             }
             prevOpenTimeMs = openTimeMs;
 
-            LocalDateTime dateTime = LocalDateTime.ofInstant(Instant.ofEpochMilli(openTimeMs), ZoneId.systemDefault());
+            LocalDateTime dateTime = LocalDateTime.ofInstant(Instant.ofEpochMilli(openTimeMs), ZoneOffset.UTC);
             String timeStr = dateTime.format(formatter);
 
             BigDecimal open = parsePriceScale(kline.get(1).asText(null));
