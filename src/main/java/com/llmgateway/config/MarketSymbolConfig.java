@@ -121,19 +121,16 @@ public final class MarketSymbolConfig {
         // BTC aliases
         aliases.put("BTC", CANONICAL_BTC);
         aliases.put("BTCUSDT", CANONICAL_BTC);
-        aliases.put("BTC/USDT", CANONICAL_BTC);
         aliases.put("BTCUSD", CANONICAL_BTC);
 
         // ETH aliases
         aliases.put("ETH", CANONICAL_ETH);
         aliases.put("ETHUSDT", CANONICAL_ETH);
-        aliases.put("ETH/USDT", CANONICAL_ETH);
         aliases.put("ETHUSD", CANONICAL_ETH);
 
         // XAU aliases
         aliases.put("XAU", CANONICAL_XAU);
         aliases.put("XAUUSD", CANONICAL_XAU);
-        aliases.put("XAU/USD", CANONICAL_XAU);
         aliases.put("PAXG", CANONICAL_XAU);
         aliases.put("PAXGUSDT", CANONICAL_XAU);
         aliases.put("GOLD", CANONICAL_XAU);
@@ -141,31 +138,26 @@ public final class MarketSymbolConfig {
         // BNB aliases
         aliases.put("BNB", CANONICAL_BNB);
         aliases.put("BNBUSDT", CANONICAL_BNB);
-        aliases.put("BNB/USDT", CANONICAL_BNB);
         aliases.put("BNBUSD", CANONICAL_BNB);
 
         // SOL aliases
         aliases.put("SOL", CANONICAL_SOL);
         aliases.put("SOLUSDT", CANONICAL_SOL);
-        aliases.put("SOL/USDT", CANONICAL_SOL);
         aliases.put("SOLUSD", CANONICAL_SOL);
 
         // XRP aliases
         aliases.put("XRP", CANONICAL_XRP);
         aliases.put("XRPUSDT", CANONICAL_XRP);
-        aliases.put("XRP/USDT", CANONICAL_XRP);
         aliases.put("XRPUSD", CANONICAL_XRP);
 
         // ADA aliases
         aliases.put("ADA", CANONICAL_ADA);
         aliases.put("ADAUSDT", CANONICAL_ADA);
-        aliases.put("ADA/USDT", CANONICAL_ADA);
         aliases.put("ADAUSD", CANONICAL_ADA);
 
         // DOGE aliases
         aliases.put("DOGE", CANONICAL_DOGE);
         aliases.put("DOGEUSDT", CANONICAL_DOGE);
-        aliases.put("DOGE/USDT", CANONICAL_DOGE);
         aliases.put("DOGEUSD", CANONICAL_DOGE);
 
         ALIAS_MAP = Collections.unmodifiableMap(aliases);
@@ -281,6 +273,6 @@ public final class MarketSymbolConfig {
     }
 
     private static String normalizeKey(String symbol) {
-        return symbol.trim().toUpperCase(Locale.ROOT).replace("-", "").replace("_", "");
+        return symbol.trim().toUpperCase(Locale.ROOT).replace("-", "").replace("_", "").replace("/", "");
     }
 }

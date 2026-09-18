@@ -1,5 +1,6 @@
 package com.llmgateway.filter;
 
+import com.llmgateway.util.JwtUtil;
 import jakarta.servlet.Filter;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -9,30 +10,25 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Rate Limiter — Giới hạn số request mỗi IP trong 1 khoảng thời gian.
+ * Rate Limiter — Giới hạn số request theo IP / User trong một khoảng thời gian.
  *
- * Tại sao cần Rate Limit?
- * - Nếu không giới hạn, một người dùng (hoặc bot) có thể gửi 10.000 request/giây.
- * - Mỗi request tốn tiền API (OpenAI tính theo token).
- * - Server sẽ bị quá tải và sập.
- *
- * Cách hoạt động (Sliding Window đơn giản):
- * - Mỗi IP được phép gửi tối đa N request trong M giây.
- * - Nếu vượt quá, server trả lỗi 429 (Too Many Requests).
- * - Sau M giây, bộ đếm tự động reset về 0.
- *
- * Lưu ý: Đây là rate limit in-memory (lưu trong RAM).
- * Khi deploy nhiều server (scale out), mỗi server có bộ đếm riêng.
- * Giải pháp Cloud nâng cao sẽ dùng Redis để chia sẻ bộ đếm giữa các server.
+ * Chính sách phân cấp:
+ * 1. Các endpoint tĩnh / tài liệu / giao dịch khớp lệnh: Bỏ qua kiểm tra.
+ * 2. GET /api/watchlist/ai-insights: Giữ giới hạn NGHIÊM NGẶT (mặc định 10 req/phút) vì tốn tài nguyên AI & tin tức.
+ * 3. Watchlist CRUD (GET/POST/DELETE /api/watchlist): Áp dụng hạn mức riêng theo user/method (60 GET, 30 POST, 30 DELETE/phút)
+ *    đáp ứng thao tác người dùng thêm/xóa nhiều mã nhanh chóng nhưng vẫn ngăn chặn lạm dụng hoặc DoS.
+ * 4. Các endpoint khác: Áp dụng giới hạn mặc định maxRequests (10 req/phút).
  */
 @Component
 public class RateLimitFilter implements Filter {
@@ -40,16 +36,32 @@ public class RateLimitFilter implements Filter {
     private static final Logger log = LoggerFactory.getLogger(RateLimitFilter.class);
 
     @Value("${gateway.rate-limit.max-requests:10}")
-    private int maxRequests;
+    private int maxRequests = 10;
 
     @Value("${gateway.rate-limit.window-seconds:60}")
-    private int windowSeconds;
+    private int windowSeconds = 60;
 
-    /**
-     * Bộ nhớ lưu trữ: mỗi IP có một Entry gồm (số lần đã gọi, thời điểm bắt đầu đếm).
-     * ConcurrentHashMap = HashMap an toàn cho đa luồng (nhiều user gọi cùng lúc).
-     */
-    private final Map<String, RateLimitEntry> ipCounters = new ConcurrentHashMap<>();
+    @Value("${gateway.rate-limit.watchlist.get-max:60}")
+    private int watchlistGetMax = 60;
+
+    @Value("${gateway.rate-limit.watchlist.mutation-max:30}")
+    private int watchlistMutationMax = 30;
+
+    private final JwtUtil jwtUtil;
+    private final Map<String, RateLimitEntry> rateLimitCounters = new ConcurrentHashMap<>();
+
+    public RateLimitFilter() {
+        this(null);
+    }
+
+    @Autowired
+    public RateLimitFilter(@Autowired(required = false) JwtUtil jwtUtil) {
+        this.jwtUtil = jwtUtil;
+    }
+
+    public void clearCounters() {
+        rateLimitCounters.clear();
+    }
 
     @Override
     public void doFilter(ServletRequest servletRequest, ServletResponse servletResponse, FilterChain chain)
@@ -59,49 +71,102 @@ public class RateLimitFilter implements Filter {
         HttpServletResponse response = (HttpServletResponse) servletResponse;
 
         String path = request.getRequestURI();
-        // Bỏ qua rate limit cho các API giao dịch, thị trường, admin và trang web
-        if (path.startsWith("/api/trade") || path.startsWith("/api/admin") || path.startsWith("/api/market") 
+
+        // 1. Bỏ qua rate limit cho các API giao dịch, thị trường công khai, admin và trang tài liệu tĩnh
+        if (path.startsWith("/api/trade") || path.startsWith("/api/admin") || path.startsWith("/api/market")
                 || path.startsWith("/h2-console") || path.startsWith("/swagger-ui") || path.startsWith("/v3/api-docs")
                 || path.endsWith(".html") || path.endsWith(".js") || path.endsWith(".css")) {
             chain.doFilter(request, response);
             return;
         }
 
-        String clientIp = getClientIp(request);
-        long now = System.currentTimeMillis();
+        String clientIdentifier = resolveClientIdentifier(request);
 
-        // Lấy hoặc tạo bộ đếm cho IP này
-        RateLimitEntry entry = ipCounters.computeIfAbsent(clientIp, k -> new RateLimitEntry(now));
-
-        // Kiểm tra: nếu cửa sổ thời gian đã hết hạn, reset bộ đếm
-        if (now - entry.windowStart > windowSeconds * 1000L) {
-            entry.reset(now);
+        // 2. Phân nhánh kiểm soát cho /api/watchlist
+        if (path.startsWith("/api/watchlist")) {
+            if (path.equals("/api/watchlist/ai-insights") || path.startsWith("/api/watchlist/ai-insights/")) {
+                // Endpoint AI Insights: Giới hạn chặt chẽ (mặc định 10 req/phút) để bảo vệ tài nguyên LLM/News
+                String aiKey = clientIdentifier + ":ai-insights";
+                if (isRateLimited(aiKey, maxRequests, windowSeconds)) {
+                    sendRateLimitResponse(response, aiKey, maxRequests);
+                    return;
+                }
+            } else {
+                // Watchlist CRUD cơ bản (GET, POST, DELETE): Áp dụng hạn mức riêng theo user và HTTP method
+                String method = request.getMethod() != null ? request.getMethod().toUpperCase(Locale.ROOT) : "GET";
+                int methodLimit = getWatchlistMethodLimit(method);
+                String watchlistKey = clientIdentifier + ":watchlist:" + method;
+                if (isRateLimited(watchlistKey, methodLimit, windowSeconds)) {
+                    sendRateLimitResponse(response, watchlistKey, methodLimit);
+                    return;
+                }
+            }
+            chain.doFilter(request, response);
+            return;
         }
 
-        // Tăng bộ đếm lên 1 và kiểm tra
-        int currentCount = entry.counter.incrementAndGet();
-
-        if (currentCount > maxRequests) {
-            // Vượt quá giới hạn => Từ chối phục vụ
-            log.warn("RATE LIMITED | ip={} | count={} | max={}", clientIp, currentCount, maxRequests);
-
-            response.setStatus(429);
-            response.setContentType("application/json");
-            response.getWriter().write(
-                    "{\"error\": \"Too many requests. Please wait and try again.\", \"status\": 429}"
-            );
-            return;  // Dừng lại, KHÔNG cho request đi tiếp vào Controller
+        // 3. Các endpoint còn lại: Giới hạn mặc định theo IP/User
+        if (isRateLimited(clientIdentifier, maxRequests, windowSeconds)) {
+            sendRateLimitResponse(response, clientIdentifier, maxRequests);
+            return;
         }
 
-        // Chưa vượt giới hạn => Cho request đi tiếp vào Controller bình thường
         chain.doFilter(request, response);
     }
 
-    /**
-     * Lấy IP thật của client.
-     * Nếu đứng sau Load Balancer/Proxy (rất phổ biến trên Cloud),
-     * IP thật nằm trong header "X-Forwarded-For", không phải getRemoteAddr().
-     */
+    private int getWatchlistMethodLimit(String method) {
+        return switch (method) {
+            case "GET" -> watchlistGetMax;
+            case "POST", "DELETE" -> watchlistMutationMax;
+            default -> watchlistMutationMax;
+        };
+    }
+
+    private boolean isRateLimited(String key, int max, int windowSec) {
+        long now = System.currentTimeMillis();
+        RateLimitEntry entry = rateLimitCounters.computeIfAbsent(key, k -> new RateLimitEntry(now));
+
+        if (now - entry.windowStart > windowSec * 1000L) {
+            entry.reset(now);
+        }
+
+        int currentCount = entry.counter.incrementAndGet();
+        if (currentCount > max) {
+            log.warn("RATE LIMITED | key={} | count={} | max={}", key, currentCount, max);
+            return true;
+        }
+        return false;
+    }
+
+    private void sendRateLimitResponse(HttpServletResponse response, String key, int max) throws IOException {
+        response.setStatus(429);
+        response.setContentType("application/json;charset=UTF-8");
+        response.getWriter().write(
+                "{\"error\": \"Too many requests. Please wait and try again.\", \"status\": 429}"
+        );
+    }
+
+    private String resolveClientIdentifier(HttpServletRequest request) {
+        String authHeader = request.getHeader("Authorization");
+        if (authHeader != null && !authHeader.isBlank() && jwtUtil != null) {
+            try {
+                String token = authHeader.trim();
+                if (token.startsWith("Bearer ") || token.startsWith("bearer ")) {
+                    token = token.substring(7).trim();
+                }
+                if (token.startsWith("\"") && token.endsWith("\"") && token.length() > 1) {
+                    token = token.substring(1, token.length() - 1).trim();
+                }
+                Long userId = jwtUtil.getUserIdFromToken(token);
+                if (userId != null) {
+                    return "user:" + userId;
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        return "ip:" + getClientIp(request);
+    }
+
     private String getClientIp(HttpServletRequest request) {
         String forwarded = request.getHeader("X-Forwarded-For");
         if (forwarded != null && !forwarded.isBlank()) {
@@ -110,9 +175,6 @@ public class RateLimitFilter implements Filter {
         return request.getRemoteAddr();
     }
 
-    /**
-     * Entry lưu thông tin rate limit cho mỗi IP.
-     */
     private static class RateLimitEntry {
         final AtomicInteger counter = new AtomicInteger(0);
         volatile long windowStart;
